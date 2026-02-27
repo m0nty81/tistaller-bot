@@ -360,7 +360,7 @@ sudo nano /etc/systemd/system/tinstaller.service
 Убедитесь, что пути корректны:
 ```ini
 [Service]
-User=m0nty81
+User=YOUR_USER
 WorkingDirectory=/opt/web-serv
 Environment="PATH=/opt/web-serv/venv/bin"
 ExecStart=/opt/web-serv/venv/bin/gunicorn -c gunicorn.conf.py app:app
@@ -611,7 +611,7 @@ sudo journalctl -u tinstaller.service -n 50
 - Не установлены зависимости Python: `pip install flask gunicorn flask-limiter`
 - Нет прав на порт 443: `sudo setcap 'cap_net_bind_service=+ep' /opt/web-serv/venv/bin/gunicorn`
 - Нет SSL-сертификатов: проверьте пути в `gunicorn.conf.py`
-- Неправильные права на папки: `sudo chown -R m0nty81:m0nty81 /opt/web-serv`
+- Неправильные права на папки: `sudo chown -R YOUR_USER:YOUR_USER /opt/web-serv`
 
 ### 11.2. Ошибка 502 Bad Gateway
 
@@ -710,7 +710,7 @@ aapt dump badging somefile.apk | grep versionName
     delaycompress
     missingok
     notifempty
-    create 644 m0nty81 m0nty81
+    create 644 YOUR_USER YOUR_USER
     sharedscripts
     postrotate
         systemctl reload tinstaller.service > /dev/null 2>&1 || true
@@ -744,7 +744,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=m0nty81
+User=YOUR_USER
 EnvironmentFile=/opt/web-serv/.env
 ExecStart=/opt/web-serv/scripts/update_apps.sh
 ```

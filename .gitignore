@@ -51,6 +51,7 @@ prompts/
 apks/
 gunicorn.ctl
 web-serv.code-workspace
+service/*.service
 
 # Temporary files
 *.tmp

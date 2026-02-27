@@ -1,0 +1,17 @@
+[Unit]
+Description=TInstaller Flask API Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=YOUR_USER
+Group=YOUR_USER
+WorkingDirectory=/opt/web-serv
+Environment="PATH=/opt/web-serv/venv/bin"
+ExecStart=/opt/web-serv/venv/bin/gunicorn -c gunicorn.conf.py app:app
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
