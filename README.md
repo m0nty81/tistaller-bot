@@ -20,7 +20,7 @@
 ### 1.1. Операционная система
 - Ubuntu 20.04/22.04 или Debian 11/12
 - Доступ к серверу с правами sudo
-- Домен `vugluskr.xyz` должен указывать на IP-адрес сервера
+- Домен `YOUR_DOMAIN` должен указывать на IP-адрес сервера
 
 ### 1.2. Установка системных зависимостей
 ```bash
@@ -94,11 +94,11 @@ chmod 755 /var/www/apks/
 sudo systemctl stop tinstaller 2>/dev/null || true
 
 # Получите сертификат
-sudo certbot certonly --standalone -d vugluskr.xyz
+sudo certbot certonly --standalone -d YOUR_DOMAIN
 
 # Сертификаты будут сохранены в:
-# /etc/letsencrypt/live/vugluskr.xyz/fullchain.pem
-# /etc/letsencrypt/live/vugluskr.xyz/privkey.pem
+# /etc/letsencrypt/live/YOUR_DOMAIN/fullchain.pem
+# /etc/letsencrypt/live/YOUR_DOMAIN/privkey.pem
 ```
 
 **Вариант B: Использование Nginx (если Nginx уже установлен и настроен)**
@@ -109,7 +109,7 @@ sudo apt-get install -y nginx
 
 # Настройте Nginx конфиг (см. ниже)
 # Затем получите сертификат
-sudo certbot --nginx -d vugluskr.xyz
+sudo certbot --nginx -d YOUR_DOMAIN
 ```
 
 ### 3.2. Автообновление сертификатов
@@ -141,7 +141,7 @@ nano config/apps.json
     {
       "title": "Aerial Dream",
       "description": "Воздушная Мечта - экранная видео-заставка для Android TV",
-      "url": "https://vugluskr.xyz/apks/Aerial Dream.apk",
+      "url": "https://YOUR_DOMAIN/apks/Aerial Dream.apk",
       "sourceUpdate": "http://dradler.pp.ru/apps/Aerial_Dream.apk",
       "category": "Заставка"
     }
@@ -166,7 +166,7 @@ nano config/apps.json
 {
   "title": "Название",
   "description": "Описание",
-  "url": "https://vugluskr.xyz/apks/File.apk",
+  "url": "https://YOUR_DOMAIN/apks/File.apk",
   "sourceUpdate": "https://external.com/app.apk или API URL",
   "sourceMethod": "direct|github_release|gitlab_release|custom",
   "sourceFilter": "паттерн для фильтрации (опционально)",
@@ -185,7 +185,7 @@ nano config/apps.json
   "title": "Aerial Dream",
   "sourceUpdate": "http://dradler.pp.ru/apps/Aerial_Dream.apk",
   "sourceMethod": "direct",
-  "url": "https://vugluskr.xyz/apks/Aerial Dream.apk"
+  "url": "https://YOUR_DOMAIN/apks/Aerial Dream.apk"
 }
 ```
 
@@ -196,7 +196,7 @@ nano config/apps.json
   "sourceUpdate": "https://api.github.com/repos/YouROK/TorrServe/releases/latest",
   "sourceMethod": "github_release",
   "sourceFilter": "arm7",
-  "url": "https://vugluskr.xyz/apks/TorrServer-linux-arm7"
+  "url": "https://YOUR_DOMAIN/apks/TorrServer-linux-arm7"
 }
 ```
 
@@ -206,7 +206,7 @@ nano config/apps.json
   "title": "Custom App",
   "sourceUpdate": "curl -s https://api.example.com/releases | jq -r '.download_url'",
   "sourceMethod": "custom",
-  "url": "https://vugluskr.xyz/apks/CustomApp.apk"
+  "url": "https://YOUR_DOMAIN/apks/CustomApp.apk"
 }
 ```
 
@@ -258,12 +258,12 @@ loglevel = "info"
 
 ### 5.1. Конфигурация сервера
 
-Создайте файл `/etc/nginx/sites-available/vugluskr.xyz`:
+Создайте файл `/etc/nginx/sites-available/YOUR_DOMAIN`:
 
 ```nginx
 server {
     listen 80;
-    server_name vugluskr.xyz www.vugluskr.xyz;
+    server_name YOUR_DOMAIN www.YOUR_DOMAIN;
     
     # Перенаправление на HTTPS
     return 301 https://$host$request_uri;
@@ -271,11 +271,11 @@ server {
 
 server {
     listen 443 ssl http2;
-    server_name vugluskr.xyz www.vugluskr.xyz;
+    server_name YOUR_DOMAIN www.YOUR_DOMAIN;
     
     # SSL конфигурация
-    ssl_certificate /etc/letsencrypt/live/vugluskr.xyz/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/vugluskr.xyz/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/YOUR_DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/YOUR_DOMAIN/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384;
     ssl_prefer_server_ciphers off;
@@ -302,7 +302,7 @@ server {
 
 ```bash
 # Создайте симлинк
-sudo ln -s /etc/nginx/sites-available/vugluskr.xyz /etc/nginx/sites-enabled/
+sudo ln -s /etc/nginx/sites-available/YOUR_DOMAIN /etc/nginx/sites-enabled/
 
 # Удалите дефолтный сайт (если есть)
 sudo rm /etc/nginx/sites-enabled/default
@@ -321,11 +321,11 @@ sudo systemctl restart nginx
 sudo apt-get install -y certbot python3-certbot-nginx
 
 # Получите сертификат
-sudo certbot --nginx -d vugluskr.xyz -d www.vugluskr.xyz
+sudo certbot --nginx -d YOUR_DOMAIN -d www.YOUR_DOMAIN
 
 # Сертификаты будут сохранены в:
-# /etc/letsencrypt/live/vugluskr.xyz/fullchain.pem
-# /etc/letsencrypt/live/vugluskr.xyz/privkey.pem
+# /etc/letsencrypt/live/YOUR_DOMAIN/fullchain.pem
+# /etc/letsencrypt/live/YOUR_DOMAIN/privkey.pem
 ```
 
 ### 5.4. Автообновление сертификатов
@@ -501,16 +501,16 @@ tail -f logs/gunicorn_access.log
 
 ```bash
 # Проверка health endpoint
-curl https://vugluskr.xyz/health
+curl https://YOUR_DOMAIN/health
 
 # Ожидаемый ответ:
 # {"status":"ok","timestamp":"2026-02-27T..."}
 
 # Проверка списка приложений
-curl https://vugluskr.xyz/
+curl https://YOUR_DOMAIN/
 
 # Проверка скачивания APK (замените имя на реальное)
-curl -I https://vugluskr.xyz/apks/Aerial%20Dream.apk
+curl -I https://YOUR_DOMAIN/apks/Aerial%20Dream.apk
 ```
 
 ### 9.4. Проверка rate limiting
@@ -519,7 +519,7 @@ curl -I https://vugluskr.xyz/apks/Aerial%20Dream.apk
 
 ```bash
 for i in {1..70}; do
-  curl -s -o /dev/null -w "%{http_code}\n" https://vugluskr.xyz/
+  curl -s -o /dev/null -w "%{http_code}\n" https://YOUR_DOMAIN/
 done
 ```
 
@@ -798,8 +798,8 @@ sudo apt-get update && sudo apt-get upgrade -y
 
 ## Контакты и поддержка
 
-- **Домен:** https://vugluskr.xyz
-- **Health check:** https://vugluskr.xyz/health
+- **Домен:** https://YOUR_DOMAIN
+- **Health check:** https://YOUR_DOMAIN/health
 - **Логи:** `/opt/web-serv/logs/`
 
 ---

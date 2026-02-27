@@ -1,0 +1,15 @@
+{
+  "apps": [
+    {
+      "title": "Example App",
+      "description": "Example application description",
+      "url": "https://YOUR_DOMAIN/apks/ExampleApp.apk",
+      "sourceUpdate": "https://github.com/user/repo/releases/latest",
+      "sourceMethod": "github_release",
+      "sourceFilter": "arm64",
+      "category": "Utilities",
+      "ver": "1.0.0",
+      "lastUpdated": "2026-02-27T00:00:00Z"
+    }
+  ]
+}
