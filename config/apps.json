@@ -1,0 +1,64 @@
+{
+  "apps": [
+    {
+      "title": "Lampa",
+      "description": "Красивое приложение для поиска и просмотра фильмов и сериалов. Торренты и онлайн",
+      "url": "https://vugluskr.xyz/apks/Lampa.apk",
+      "sourceUpdate": "curl -s https://api.github.com/repos/lampa-app/LAMPA/releases/latest | grep \"browser_download_url.*\\.apk\" | cut -d '\"' -f 4",
+      "sourceMethod": "custom",
+      "category": "База",
+      "lastUpdated": "2026-02-27T16:29:56Z",
+      "ver": "1.12.4"
+    },
+    {
+      "title": "NUM",
+      "description": "Отличное приложение для поиска видео на самых популярных торрент-трекерах. Только торренты!",
+      "url": "https://vugluskr.xyz/apks/NUM.apk",
+      "sourceUpdate": "http://dradler.pp.ru/apps/NUM.apk",
+      "sourceMethod": "direct",
+      "category": "База",
+      "lastUpdated": "2026-02-27T19:33:00Z",
+      "ver": "1.0.150"
+    },
+    {
+      "title": "SmartTube",
+      "description": "Отличная замена штатному YouTube. Удобный интерфейс, автофреймрейт (для приставок), отсутствие рекламы и SponsorBlock",
+      "url": "https://vugluskr.xyz/apks/SmartTube.apk",
+      "sourceUpdate": "curl -s https://api.github.com/repos/yuliskov/SmartTube/releases?per_page=10 | jq -r '.[] | select(.prerelease == false) | .assets[] | select(.name | test(\"universal\")) | .browser_download_url' | head -1",
+      "sourceMethod": "custom",
+      "category": "База",
+      "ver": "30.90",
+      "lastUpdated": "2026-02-27T21:21:54Z"
+    },
+    {
+      "title": "TInstaller",
+      "description": "Приложение для установки APK",
+      "url": "https://vugluskr.xyz/apks/TInstaller.apk",
+      "sourceUpdate": "https://github.com/maksim-ignatov/tinstaller-repository/releases/download/latest/TInstaller.apk",
+      "sourceMethod": "direct",
+      "category": "Утилиты",
+      "lastUpdated": "2026-02-27T19:30:55Z",
+      "ver": "1.08"
+    },
+    {
+      "title": "TorrServe",
+      "description": "Клиент для потоковой передачи торрентов",
+      "url": "https://vugluskr.xyz/apks/TorrServe.apk",
+      "sourceUpdate": "curl -s https://api.github.com/repos/YouROK/TorrServe/releases/latest | grep \"browser_download_url.*\\.apk\" | cut -d '\"' -f 4",
+      "sourceMethod": "custom",
+      "category": "База",
+      "lastUpdated": "2026-02-27T16:29:47Z",
+      "ver": "MatriX.141.Client"
+    },
+    {
+      "title": "Zona",
+      "description": "Приложение для потокового видео. Сериалы и пр.",
+      "url": "https://vugluskr.xyz/apks/Zona.apk",
+      "sourceUpdate": "https://apkr.upzona.net/zona5.apk",
+      "sourceMethod": "direct",
+      "category": "База",
+      "lastUpdated": "2026-02-27T20:19:10Z",
+      "ver": "3.0.45"
+    }
+  ]
+}

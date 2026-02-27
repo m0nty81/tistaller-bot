@@ -1,0 +1,17 @@
+[Unit]
+Description=TInstaller Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=m0nty81
+WorkingDirectory=/opt/web-serv
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/web-serv/venv/bin"
+EnvironmentFile=/opt/web-serv/.env
+ExecStart=/opt/web-serv/venv/bin/python3 /opt/web-serv/telegram_bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

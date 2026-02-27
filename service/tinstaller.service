@@ -1,0 +1,15 @@
+[Unit]
+Description=Tinstaller Update Server
+After=network.target
+
+[Service]
+Type=simple
+User=m0nty81
+WorkingDirectory=/opt/web-serv
+Environment="PATH=/opt/web-serv/venv/bin"
+ExecStart=/opt/web-serv/venv/bin/gunicorn -c gunicorn.conf.py app:app
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
