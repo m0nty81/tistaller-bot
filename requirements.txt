@@ -2,4 +2,6 @@ flask
 flask-limiter
 python-telegram-bot
 httpx
-gunicorn
+apscheduler
+python-dotenv
+aiohttp

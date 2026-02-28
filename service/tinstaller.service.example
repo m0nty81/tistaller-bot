@@ -1,15 +1,16 @@
 [Unit]
-Description=TInstaller Flask API Server
+Description=TInstaller - Unified APK Distribution Server
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=notify
+Type=simple
 User=YOUR_USER
 Group=YOUR_USER
 WorkingDirectory=/opt/web-serv
 Environment="PATH=/opt/web-serv/venv/bin"
-ExecStart=/opt/web-serv/venv/bin/gunicorn -c gunicorn.conf.py app:app
+EnvironmentFile=/opt/web-serv/.env
+ExecStart=/opt/web-serv/venv/bin/python3 /opt/web-serv/server.py
 Restart=always
 RestartSec=5
 
