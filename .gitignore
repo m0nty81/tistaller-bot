@@ -47,7 +47,9 @@ Thumbs.db
 
 # Project specific
 config/apps.json
+config/files.json
 apks/
+files/
 gunicorn.ctl
 web-serv.code-workspace
 service/*.service
