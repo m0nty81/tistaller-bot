@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Keet Messenger - Установка и настройка для Android</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #00adb5;
+            border-bottom: 3px solid #00adb5;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #00adb5;
+            margin-top: 30px;
+            background: #f8f8f8;
+            padding: 10px;
+            border-left: 4px solid #00adb5;
+        }
+        h3 {
+            color: #333;
+            margin-top: 25px;
+        }
+        .step {
+            background: #f9f9f9;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+            border-left: 4px solid #00adb5;
+        }
+        .step-number {
+            background: #00adb5;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 10px;
+            font-weight: bold;
+        }
+        .warning {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .important {
+            background: #d1ecf1;
+            border-left: 4px solid #17a2b8;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .manufacturer {
+            background: #e7f3ff;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border: 1px solid #b3d9ff;
+        }
+        .manufacturer h4 {
+            margin-top: 0;
+            color: #0066cc;
+        }
+        ul, ol {
+            margin: 10px 0;
+            padding-left: 30px;
+        }
+        li {
+            margin: 8px 0;
+        }
+        .screenshot {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .screenshot img {
+            max-width: 100%;
+            height: auto;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .screenshot-caption {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+            font-style: italic;
+        }
+        @media print {
+            body {
+                background: white;
+            }
+            .container {
+                box-shadow: none;
+            }
+            .step, .warning, .important, .manufacturer {
+                break-inside: avoid;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📱 Keet Messenger<br>Установка и настройка для Android</h1>
+        
+        <div class="important">
+            <strong>Keet</strong> — это P2P мессенджер с сквозным шифрованием, который не использует серверы. 
+            Для стабильной работы важно правильно настроить работу приложения в фоне.
+        </div>
+
+        <h2>📥 ЧАСТЬ 1: УСТАНОВКА</h2>
+        
+        <div class="step">
+            <span class="step-number">1</span><strong>Скачайте приложение</strong>
+            <ul>
+                <li><strong>Для устройств с Google Play:</strong>
+                    <ul>
+                        <li>Откройте <strong>Google Play</strong></li>
+                        <li>Введите в поиске <strong>"Keet"</strong> или <strong>"Keet - Private Encrypted Chat"</strong></li>
+                        <li>Нажмите <strong>"Установить"</strong></li>
+                    </ul>
+                </li>
+                <li><strong>Для устройств Huawei (без Google Play):</strong>
+                    <ul>
+                        <li>Откройте <strong>AppGallery</strong> (магазин приложений Huawei)</li>
+                        <li>Введите в поиске <strong>"Keet"</strong></li>
+                        <li>Нажмите <strong>"Установить"</strong></li>
+                    </ul>
+                </li>
+                <li><strong>Альтернативный способ:</strong>
+                    <ul>
+                        <li>Посетите сайт <strong>keet.io/download</strong></li>
+                        <li>Скачайте APK-файл для Android</li>
+                        <li>Разрешите установку из неизвестных источников при необходимости</li>
+                    </ul>
+                </li>
+            </ul>
+            <div class="screenshot">
+                <img src="https://image.qwenlm.ai/public_source/fa2f6fbd-c975-4ade-a413-8af75eb9330c/0fd722297-7330-40c0-8bc4-3b73be3ad8b85238.png" alt="Keet в Google Play">
+                <div class="screenshot-caption">Keet - мессенджер для конфиденциальности</div>
+            </div>
+        </div>
+
+        <div class="step">
+            <span class="step-number">2</span><strong>Запустите приложение</strong>
+            <ul>
+                <li>Откройте Keet после установки</li>
+                <li>Выберите <strong>"I'm new to Keet"</strong> (Я новый пользователь)</li>
+            </ul>
+        </div>
+
+        <div class="step">
+            <span class="step-number">3</span><strong>Настройте профиль</strong>
+            <ul>
+                <li><strong>Quick setup</strong> — фраза восстановления генерируется и автоматически сохраняется на устройстве</li>
+                <li><strong>Manual setup</strong> — вы должны самостоятельно записать фразу восстановления</li>
+                <li>Запишите <strong>24 слова фразы восстановления</strong> — это единственный способ восстановить доступ!</li>
+            </ul>
+        </div>
+
+        <div class="step">
+            <span class="step-number">4</span><strong>Завершите настройку</strong>
+            <ul>
+                <li>Введите <strong>отображаемое имя</strong> (Display Name) — можно изменить в любой момент</li>
+                <li>При желании укажите <strong>имя пользователя</strong> (Username) — для поиска другими пользователями</li>
+            </ul>
+        </div>
+
+        <div class="important">
+            <strong>📝 Правила для имени пользователя (Username):</strong>
+            <ul>
+                <li>Длина: от <strong>4 до 31 символа</strong> (больше 3 и меньше 32)</li>
+                <li>Разрешены только <strong>строчные буквы латинского алфавита</strong> (a–z)</li>
+                <li>Разрешены <strong>цифры</strong> (0–9) — <strong>минимум одна обязательна</strong></li>
+                <li>Можно использовать <strong>нижнее подчёркивание</strong> (_)</li>
+                <li>Пробелы, заглавные буквы и специальные символы запрещены</li>
+                <li>Должно быть <strong>уникальным</strong> в системе</li>
+                <li><strong>Нельзя удалить</strong> — можно только изменить (максимум 5 попыток всего)</li>
+                <li>Старый username <strong>нельзя повторно использовать</strong> (ни вами, ни другими)</li>
+                <li>Примеры: <code>user123</code>, <code>alex_smith7</code>, <code>johndoe2026</code></li>
+            </ul>
+        </div>
+
+        <h2>⚡ ЧАСТЬ 2: НАСТРОЙКА РАБОТЫ В ФОНЕ</h2>
+
+        <div class="warning">
+            <strong>⚠️ ВАЖНО:</strong> Android по умолчанию ограничивает работу приложений в фоне для экономии батареи.
+            Без правильной настройки Keet может не получать сообщения!
+        </div>
+
+        <h3>🔧 Универсальная настройка (все Android)</h3>
+
+        <div class="step">
+            <span class="step-number">1</span><strong>Откройте настройки приложения</strong>
+            <ul>
+                <li>Настройки → Приложения → Keet</li>
+            </ul>
+            <div class="screenshot">
+                <img src="https://image.qwenlm.ai/public_source/fa2f6fbd-c975-4ade-a413-8af75eb9330c/4fd722297-7330-40c0-8bc4-3b73be3ad8b84424.png" alt="Настройки приложений">
+            </div>
+        </div>
+
+        <div class="step">
+            <span class="step-number">2</span><strong>Настройте батарею</strong>
+            <ul>
+                <li>Нажмите <strong>"Батарея"</strong> или <strong>"Battery"</strong></li>
+                <li>Выберите <strong>"Неограниченно"</strong> (Unrestricted) или <strong>"Без оптимизации"</strong></li>
+                <li>Включите <strong>"Разрешить фоновую активность"</strong></li>
+            </ul>
+            <div class="screenshot">
+                <img src="https://image.qwenlm.ai/public_source/fa2f6fbd-c975-4ade-a413-8af75eb9330c/2fd722297-7330-40c0-8bc4-3b73be3ad8b81561.png" alt="Настройки батареи">
+                <div class="screenshot-caption">
+                    <strong>Настройки батареи:</strong><br>
+                    Samsung: Настройки → Обслуживание устройства → Батарея → Приложения<br>
+                    Xiaomi: Настройки → Приложения → Управление приложениями → Keet → Батарея<br>
+                    Huawei: Настройки → Батарея → Запуск приложений<br>
+                    Tecno: Настройки → Battery Lab → Настройки экономии батареи
+                </div>
+            </div>
+        </div>
+
+        <div class="step">
+            <span class="step-number">3</span><strong>Отключите оптимизацию батареи</strong>
+            <ul>
+                <li>Настройки → Приложения → Keet → Батарея</li>
+                <li>Нажмите <strong>«Оптимизация батареи»</strong></li>
+                <li>Переключите на <strong>«Все приложения»</strong></li>
+                <li>Найдите Keet и выберите <strong>«Не оптимизировать»</strong></li>
+            </ul>
+            <div class="screenshot">
+                <img src="https://image.qwenlm.ai/public_source/fa2f6fbd-c975-4ade-a413-8af75eb9330c/3fd722297-7330-40c0-8bc4-3b73be3ad8b81309.png" alt="Отключение оптимизации">
+                <div class="screenshot-caption">
+                    <strong>Отключение оптимизации:</strong><br>
+                    Samsung: Настройки → Приложения → Keet → Батарея → Оптимизация батареи → Не оптимизировать<br>
+                    Xiaomi: Настройки → Приложения → Keet → Батарея → Экономия заряда в фоне → Без ограничений<br>
+                    Huawei: Настройки → Приложения → Keet → Батарея → Не оптимизировать<br>
+                    Tecno: Phone Master → Power Marathon → Отключить Power Boost
+                </div>
+            </div>
+        </div>
+
+        <h3>📱 Настройки для разных производителей</h3>
+
+        <div class="manufacturer">
+            <h4>🔴 Samsung (One UI)</h4>
+            <p><strong>Android 11-14:</strong></p>
+            <ol>
+                <li><strong>Настройки</strong> → <strong>Обслуживание устройства</strong> → <strong>Батарея</strong></li>
+                <li>Нажмите меню (<strong>⋮</strong>) → <strong>Настройки</strong></li>
+                <li><strong>Отключите:</strong>
+                    <ul>
+                        <li>✓ «Переводить неиспользуемые приложения в спящий режим»</li>
+                        <li>✓ «Автооптимизация ежедневно»</li>
+                        <li>✓ «Адаптивная экономия заряда»</li>
+                    </ul>
+                </li>
+                <li>Вернитесь → <strong>«Спящие приложения»</strong></li>
+                <li>Удалите Keet из списка спящих</li>
+                <li>Добавьте Keet в <strong>«Приложения, которые не переводятся в спящий режим»</strong></li>
+            </ol>
+
+            <p><strong>Ограничения в фоновом режиме:</strong></p>
+            <ol>
+                <li><strong>Настройки</strong> → <strong>Обслуживание устройства</strong> → <strong>Батарея</strong> → <strong>Ограничения в фоновом режиме</strong></li>
+                <li>Проверьте, что Keet нет в списках:<br>
+                    <ul>
+                        <li>❌ <strong>Приложения в режиме сна</strong></li>
+                        <li>❌ <strong>Приложения с глубоким сном</strong></li>
+                    </ul>
+                </li>
+            </ol>
+
+            <p><strong>Дополнительно (Android 14+):</strong></p>
+            <ul>
+                <li>Установите <strong>Good Guardians</strong> из Galaxy Store</li>
+                <li>Включите <strong>Memory Guardian</strong> → Режим «Быстрое переключение»</li>
+                <li>В <strong>Battery Guardian</strong> отключите экономию для Keet</li>
+            </ul>
+
+            <div class="screenshot">
+                <img src="https://image.qwenlm.ai/public_source/fa2f6fbd-c975-4ade-a413-8af75eb9330c/0fd722297-7330-40c0-8bc4-3b73be3ad8b84611.png" alt="Samsung Device Care">
+                <div class="screenshot-caption">
+                    <strong>Samsung Device Care (Обслуживание устройства):</strong><br>
+                    Настройки → Обслуживание устройства → Батарея<br>
+                    Здесь доступны: Спящие приложения, Ограничения в фоновом режиме, Настройки батареи
+                </div>
+            </div>
+        </div>
+
+        <div class="manufacturer">
+            <h4>🔵 Xiaomi (MIUI/HyperOS)</h4>
+            
+            <p><strong>1. Автозапуск:</strong></p>
+            <ol>
+                <li>Откройте приложение <strong>Безопасность</strong> (зелёная иконка с молнией)</li>
+                <li><strong>Разрешения</strong> → <strong>Автозапуск</strong></li>
+                <li>Включите Keet из списка</li>
+            </ol>
+
+            <p><strong>2. Контроль активности:</strong></p>
+            <ol>
+                <li><strong>Настройки</strong> → <strong>Приложения</strong> → <strong>Управление приложениями</strong></li>
+                <li>Найдите Keet → <strong>Контроль активности</strong></li>
+                <li>Выберите <strong>«Нет ограничений»</strong></li>
+            </ol>
+
+            <p><strong>3. Батарея:</strong></p>
+            <ol>
+                <li><strong>Настройки</strong> → <strong>Батарея и производительность</strong></li>
+                <li><strong>Экономия заряда в фоне</strong> → <strong>Выбор приложений</strong></li>
+                <li>Найдите Keet → <strong>«Без ограничений»</strong></li>
+            </ol>
+
+            <p><strong>4. Закрепление в памяти:</strong></p>
+            <ul>
+                <li>Откройте <strong>Недавние приложения</strong></li>
+                <li><strong>Долгое нажатие</strong> на Keet → нажмите <strong>🔒 Замок</strong></li>
+                <li>ИЛИ <strong>свайп вниз</strong> на приложении до появления замка</li>
+            </ul>
+
+            <p><strong>Важно для MIUI:</strong></p>
+            <ul>
+                <li>❌ Отключите <strong>«Расширенную оптимизацию»</strong> в настройках для разработчиков</li>
+                <li>✅ Добавьте Keet в <strong>«Исключения»</strong> в приложении Очистка</li>
+            </ul>
+
+            <div class="screenshot">
+                <img src="https://image.qwenlm.ai/public_source/fa2f6fbd-c975-4ade-a413-8af75eb9330c/4fd722297-7330-40c0-8bc4-3b73be3ad8b84424.png" alt="Xiaomi MIUI настройки">
+                <div class="screenshot-caption">
+                    <strong>Xiaomi MIUI/HyperOS:</strong><br>
+                    Безопасность → Разрешения → Автозапуск<br>
+                    Настройки → Приложения → Управление приложениями → Keet → Контроль активности → Нет ограничений
+                </div>
+            </div>
+        </div>
+
+        <div class="manufacturer">
+            <h4>🟢 Huawei (EMUI)</h4>
+            
+            <p><strong>1. Запуск приложений:</strong></p>
+            <ol>
+                <li><strong>Настройки</strong> → <strong>Батарея</strong> → <strong>Запуск приложений</strong></li>
+                <li>Найдите Keet → <strong>Отключите «Управлять автоматически»</strong></li>
+                <li>Включите все три переключателя вручную:
+                    <ul>
+                        <li>✓ <strong>Автозапуск</strong></li>
+                        <li>✓ <strong>Косвенный запуск</strong></li>
+                        <li>✓ <strong>Работа в фоне</strong></li>
+                    </ul>
+                </li>
+            </ol>
+
+            <p><strong>2. Оптимизация батареи:</strong></p>
+            <ol>
+                <li><strong>Настройки</strong> → <strong>Приложения</strong> → <strong>Приложения</strong></li>
+                <li>Найдите Keet → <strong>Батарея</strong></li>
+                <li>Выберите <strong>«Не оптимизировать»</strong></li>
+            </ol>
+
+            <p><strong>3. Закрепление в памяти:</strong></p>
+            <ul>
+                <li>Откройте <strong>Недавние приложения</strong></li>
+                <li><strong>Свайп вниз</strong> на карточке Keet до появления иконки 🔒</li>
+            </ul>
+
+            <p><strong>Важно для EMUI:</strong></p>
+            <ul>
+                <li>✅ Включите <strong>«Расширенный запуск»</strong> для Keet</li>
+                <li>❌ Отключите <strong>«Умную экономию заряда»</strong> в настройках батареи</li>
+            </ul>
+
+            <div class="screenshot">
+                <img src="https://image.qwenlm.ai/public_source/fa2f6fbd-c975-4ade-a413-8af75eb9330c/2fd722297-7330-40c0-8bc4-3b73be3ad8b81561.png" alt="Huawei EMUI настройки">
+                <div class="screenshot-caption">
+                    <strong>Huawei EMUI:</strong><br>
+                    Настройки → Батарея → Запуск приложений → Управлять вручную<br>
+                    Включите: Автозапуск, Косвенный запуск, Работа в фоне
+                </div>
+            </div>
+        </div>
+
+        <div class="manufacturer">
+            <h4>⚫ Tecno (HiOS)</h4>
+            
+            <p><strong>1. Phone Master:</strong></p>
+            <ol>
+                <li>Откройте приложение <strong>Phone Master</strong></li>
+                <li><strong>Инструменты</strong> → <strong>Управление автозапуском</strong></li>
+                <li>Включите Keet из списка</li>
+            </ol>
+
+            <p><strong>2. Power Marathon:</strong></p>
+            <ol>
+                <li><strong>Phone Master</strong> → <strong>Power Marathon</strong></li>
+                <li><strong>Отключите «Power Boost»</strong> (Ускорение батареи)</li>
+            </ol>
+
+            <p><strong>3. App Booster:</strong></p>
+            <ol>
+                <li><strong>Phone Master</strong> → <strong>App Booster</strong></li>
+                <li>Добавьте Keet (максимум 4 приложения)</li>
+            </ol>
+
+            <p><strong>4. Battery Lab:</strong></p>
+            <ol>
+                <li><strong>Настройки</strong> → <strong>Battery Lab</strong> → <strong>Настройки экономии батареи</strong></li>
+                <li><strong>Отключите «Экономию батареи для приложений»</strong></li>
+            </ol>
+
+            <p><strong>5. Закрепление в памяти:</strong></p>
+            <ul>
+                <li>Откройте <strong>Недавние приложения</strong></li>
+                <li>Нажмите на <strong>стрелку вниз</strong> на карточке Keet</li>
+                <li>Выберите первую опцию с <strong>иконкой замка</strong> 🔒</li>
+            </ul>
+
+            <div class="screenshot">
+                <img src="https://image.qwenlm.ai/public_source/fa2f6fbd-c975-4ade-a413-8af75eb9330c/3fd722297-7330-40c0-8bc4-3b73be3ad8b81309.png" alt="Tecno HiOS настройки">
+                <div class="screenshot-caption">
+                    <strong>Tecno HiOS:</strong><br>
+                    Phone Master → Инструменты → Управление автозапуском<br>
+                    Phone Master → Power Marathon → Отключить Power Boost<br>
+                    Настройки → Battery Lab → Настройки экономии батареи
+                </div>
+            </div>
+        </div>
+
+        <h3>🔒 Закрепление приложения в памяти</h3>
+
+        <div class="step">
+            <span class="step-number">1</span><strong>Закрепите в недавних приложениях</strong>
+            <ul>
+                <li>Откройте недавние приложения (квадратная кнопка или свайп снизу с удержанием)</li>
+                <li>Найдите окно Keet</li>
+                <li><strong>Действие зависит от бренда:</strong>
+                    <ul>
+                        <li><strong>Xiaomi:</strong> Долгое нажатие → 🔒 ИЛИ свайп вниз</li>
+                        <li><strong>Samsung:</strong> Нажать на иконку → <strong>«Оставить открытым»</strong></li>
+                        <li><strong>Huawei:</strong> Свайп вниз до появления 🔒</li>
+                        <li><strong>Tecno:</strong> Стрелка вниз → 🔒</li>
+                    </ul>
+                </li>
+            </ul>
+        </div>
+
+        <div class="step">
+            <span class="step-number">2</span><strong>Трюк с выключением экрана</strong>
+            <ul>
+                <li>Откройте Keet</li>
+                <li>Не переходите на главный экран</li>
+                <li>Сразу выключите экран (кнопкой питания)</li>
+                <li>Это предотвратит закрытие приложения системой</li>
+            </ul>
+        </div>
+
+        <div class="important">
+            <strong>✅ Проверка:</strong> После настройки перезагрузите телефон и проверьте:
+            <ul>
+                <li>Keet запускается автоматически</li>
+                <li>Сообщения приходят вовремя</li>
+                <li>Приложение не закрывается в фоне</li>
+            </ul>
+        </div>
+
+        <h2>👥 ЧАСТЬ 3: РАБОТА С КОНТАКТАМИ</h2>
+
+        <div class="important">
+            <strong>Keet использует децентрализованную систему контактов.</strong><br>
+            Вы можете связаться с пользователем по <strong>username</strong> (имени пользователя) или через <strong>QR-код</strong>.<br>
+            Все сообщения зашифрованы сквозным шифрованием и передаются напрямую между устройствами (P2P).
+        </div>
+
+        <h3>📝 Способ 1: Поиск по username</h3>
+
+        <div class="step">
+            <span class="step-number">1</span><strong>Откройте поиск</strong>
+            <ul>
+                <li>Запустите Keet</li>
+                <li>В верхней части экрана нажмите на <strong>строку поиска</strong> с текстом «Search Keet»</li>
+                <li>Введите точное имя пользователя (например, <code>john2026</code>)</li>
+            </ul>
+            <div class="screenshot">
+                <img src="https://support.keet.io/_next/image?url=https%3A%2F%2Fdocs.keet.org%2F_next%2Fstatic%2Fmedia%2Fmessaging-search.9e5f0a3d.png&w=1200&q=75" alt="Поиск по username в Keet">
+                <div class="screenshot-caption">Введите username в строку поиска для поиска пользователя</div>
+            </div>
+        </div>
+
+        <div class="step">
+            <span class="step-number">2</span><strong>Отправьте запрос на добавление</strong>
+            <ul>
+                <li>Найдите нужного пользователя в результатах поиска</li>
+                <li>Нажмите на профиль пользователя</li>
+                <li>Нажмите кнопку <strong>«DM Request»</strong></li>
+                <li>Введите приветственное сообщение (его увидит получатель до принятия запроса)</li>
+                <li>Нажмите <strong>«Send»</strong></li>
+            </ul>
+            <div class="warning">
+                <strong>⚠️ Важно:</strong> Username должен быть введён <strong>точно</strong>, включая цифры и подчёркивания.
+                Регистр не имеет значения (все username в нижнем регистре).
+            </div>
+        </div>
+
+        <div class="step">
+            <span class="step-number">3</span><strong>Дождитесь подтверждения</strong>
+            <ul>
+                <li>Пользователь получит уведомление о запросе в верхней части списка чатов</li>
+                <li>После подтверждения вы сможете обмениваться сообщениями</li>
+                <li>Запрос отображается в списке чатов до тех пор, пока не будет принят или отклонён</li>
+            </ul>
+        </div>
+
+        <h3>📷 Способ 2: Сканирование QR-кода</h3>
+
+        <div class="step">
+            <span class="step-number">1</span><strong>Откройте сканер QR-кодов</strong>
+            <ul>
+                <li>В строке поиска нажмите на иконку <strong>QR-сканера</strong> 🏁</li>
+                <li>Или долгое нажатие на иконку приложения на главном экране Android</li>
+            </ul>
+        </div>
+
+        <div class="step">
+            <span class="step-number">2</span><strong>Отсканируйте QR-код</strong>
+            <ul>
+                <li>Предоставьте доступ к камере, если требуется</li>
+                <li>Наведите камеру на QR-код собеседника</li>
+                <li>Keet автоматически распознает код и откроет профиль пользователя</li>
+                <li>Нажмите <strong>«DM Request»</strong> для отправки запроса</li>
+            </ul>
+            <div class="screenshot">
+                <img src="https://support.keet.io/_next/image?url=https%3A%2F%2Fdocs.keet.org%2F_next%2Fstatic%2Fmedia%2Fmessaging-qr.7f93871a.png&w=1200&q=75" alt="Сканирование QR-кода в Keet">
+                <div class="screenshot-caption">Наведите камеру на QR-код для быстрого добавления контакта</div>
+            </div>
+        </div>
+
+        <div class="important">
+            <strong>💡 Как получить свой QR-код:</strong><br>
+            Откройте <strong>Profile</strong> (Профиль) → Нажмите <strong>«Profile QR Code»</strong> 🏁.<br>
+            Можно показать код на экране или сохранить как изображение и отправить собеседнику.
+        </div>
+
+        <h3>📨 Управление запросами</h3>
+
+        <div class="step">
+            <span class="step-number">1</span><strong>Просмотр входящих запросов</strong>
+            <ul>
+                <li>Запросы на добавление отображаются <strong>в верхней части списка чатов</strong></li>
+                <li>Вы увидите только приветственное сообщение до принятия запроса</li>
+                <li>Нажмите <strong>«Accept» ✅</strong> для принятия или <strong>«Ignore» ❌</strong> для отклонения</li>
+            </ul>
+        </div>
+
+        <div class="step">
+            <span class="step-number">2</span><strong>Отмена исходящего запроса</strong>
+            <ul>
+                <li>Откройте чат с пользователем, которому отправили запрос</li>
+                <li>Нажмите на <strong>имя пользователя</strong> в верхней части экрана</li>
+                <li>В меню профиля выберите <strong>«Leave DM»</strong></li>
+            </ul>
+        </div>
+
+        <div class="warning">
+            <strong>⚠️ Обратите внимание:</strong>
+            <ul>
+                <li>Вы не можете добавить пользователя, который уже есть в контактах</li>
+                <li>Отправленный запрос можно отозвать до подтверждения</li>
+                <li>После удаления контакта повторное добавление возможно</li>
+                <li><strong>Удаление DM-чата необратимо</strong> — вся история переписки и файлы будут удалены с вашего устройства</li>
+            </ul>
+        </div>
+
+        <div class="important">
+            <strong>🔒 Конфиденциальность:</strong><br>
+            Если вы не указали username, другие пользователи не смогут найти вас через поиск.<br>
+            В этом случае единственный способ связаться — через <strong>QR-код профиля</strong> или если вы сами отправите запрос.
+        </div>
+
+        <h2>🎯 КРАТКАЯ ПАМЯТКА</h2>
+        
+        <div class="step">
+            <strong>Минимальные действия:</strong>
+            <ol>
+                <li>✓ Установить Keet из Google Play</li>
+                <li>✓ Сохранить фразу восстановления (24 слова)</li>
+                <li>✓ Настроить профиль (имя и username)</li>
+                <li>✓ Настройки → Приложения → Keet → Батарея → <strong>"Неограниченно"</strong></li>
+                <li>✓ Отключить оптимизацию батареи для Keet</li>
+                <li>✓ Закрепить приложение в памяти (замок в недавних)</li>
+                <li>✓ Добавить контакты через поиск или QR-код</li>
+            </ol>
+        </div>
+
+        <div class="warning">
+            <strong>⚠️ Для Samsung:</strong> Обязательно отключите "Переводить неиспользуемые приложения в спящий режим"! 
+            Иначе через 3 дня бездействия Keet перестанет работать.
+        </div>
+
+        <hr style="margin: 40px 0; border: none; border-top: 2px solid #ddd;">
+        
+        <p style="text-align: center; color: #666; font-size: 12px;">
+            Инструкция создана: Март 2026<br>
+            Keet by Holepunch — P2P мессенджер с шифрованием
+        </p>
+    </div>
+</body>
+</html>
