@@ -41,7 +41,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 BASE_DIR = Path("/opt/web-serv")
 CONFIG_PATH = BASE_DIR / "config" / "apps.json"
+FILES_CONFIG_PATH = BASE_DIR / "config" / "files.json"
 APKS_DIR = BASE_DIR / "apks"
+FILES_DIR = BASE_DIR / "files"
 LOG_FILE = BASE_DIR / "logs" / "server.log"
 
 # Переменные окружения
@@ -170,9 +172,32 @@ def save_apps(data: dict):
     """Сохранить apps.json, отсортировав по title."""
     if "apps" in data:
         data["apps"] = sorted(data["apps"], key=lambda x: x.get("title", "").lower())
-    
+
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+# =============================================================================
+# УПРАВЛЕНИЕ ФАЙЛАМИ (FILES)
+# =============================================================================
+
+def load_files() -> dict:
+    """Загрузить files.json."""
+    try:
+        with open(FILES_CONFIG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {"files": []}
+
+
+def save_files(data: dict):
+    """Сохранить files.json, отсортировав по filename."""
+    if "files" in data:
+        data["files"] = sorted(data["files"], key=lambda x: x.get("filename", "").lower())
+
+    FILES_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(FILES_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
@@ -492,6 +517,67 @@ async def trigger_update():
 
 
 # =============================================================================
+# FLASK API - FILES
+# =============================================================================
+
+@app.route("/files")
+@limiter.limit("60 per minute")
+def list_files():
+    """Список всех загруженных файлов."""
+    try:
+        data = load_files()
+        return jsonify(data)
+    except Exception as e:
+        log(f"Error loading files: {e}")
+        abort(500)
+
+
+@app.route("/files/<filename>")
+@limiter.limit("30 per minute")
+def download_file(filename):
+    """Скачать произвольный файл."""
+    # Валидация имени файла
+    if ".." in filename or "/" in filename or "\\" in filename:
+        abort(403)
+
+    filepath = FILES_DIR / filename
+    if not filepath.exists():
+        abort(404)
+
+    # Определяем MIME-тип
+    mimetype = "application/octet-stream"
+    if filename.lower().endswith(".html") or filename.lower().endswith(".htm"):
+        mimetype = "text/html"
+    elif filename.lower().endswith(".css"):
+        mimetype = "text/css"
+    elif filename.lower().endswith(".js"):
+        mimetype = "application/javascript"
+    elif filename.lower().endswith(".json"):
+        mimetype = "application/json"
+    elif filename.lower().endswith(".png"):
+        mimetype = "image/png"
+    elif filename.lower().endswith(".jpg") or filename.lower().endswith(".jpeg"):
+        mimetype = "image/jpeg"
+    elif filename.lower().endswith(".gif"):
+        mimetype = "image/gif"
+    elif filename.lower().endswith(".svg"):
+        mimetype = "image/svg+xml"
+    elif filename.lower().endswith(".txt"):
+        mimetype = "text/plain"
+    elif filename.lower().endswith(".xml"):
+        mimetype = "application/xml"
+    elif filename.lower().endswith(".pdf"):
+        mimetype = "application/pdf"
+
+    return send_file(
+        str(filepath),
+        mimetype=mimetype,
+        as_attachment=False,
+        download_name=filename
+    )
+
+
+# =============================================================================
 # TELEGRAM БОТ
 # =============================================================================
 
@@ -501,6 +587,8 @@ def get_main_keyboard():
         [KeyboardButton("/apps"), KeyboardButton("/status")],
         [KeyboardButton("/updateall"), KeyboardButton("/updateapp")],
         [KeyboardButton("/addapp"), KeyboardButton("/removeapp")],
+        [KeyboardButton("/files"), KeyboardButton("/upload")],
+        [KeyboardButton("/delfile")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
@@ -642,6 +730,438 @@ async def updateall_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔄 Запуск обновления всех приложений...")
     await update_all_apps()
     await update.message.reply_text("✅ Обновление завершено.")
+
+
+# =============================================================================
+# КОМАНДА /FILES - СПИСОК ФАЙЛОВ
+# =============================================================================
+
+async def files_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /files - список всех загруженных файлов."""
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Доступ запрещён.")
+        return
+
+    try:
+        data = load_files()
+        files = data.get("files", [])
+
+        if not files:
+            await update.message.reply_text(
+                "📁 <b>Список файлов пуст</b>\n\n"
+                "Используйте /upload для загрузки файла.",
+                parse_mode="HTML"
+            )
+            return
+
+        message = "📁 <b>Загруженные файлы:</b>\n\n"
+
+        for i, file in enumerate(files, 1):
+            filename = file.get("filename", "Unknown")
+            original_name = file.get("original_name", filename)
+            size = file.get("size", 0)
+            uploaded = file.get("uploaded", "Unknown")
+            url = file.get("url", "")
+
+            size_str = f"{size / 1024:.1f} KB" if size < 1024 * 1024 else f"{size / 1024 / 1024:.1f} MB"
+
+            message += f"<b>{i}. {original_name}</b>\n"
+            message += f"   📄 Файл: <code>{filename}</code>\n"
+            message += f"   📦 Размер: {size_str}\n"
+            message += f"   📅 Загружен: {uploaded}\n"
+            if url:
+                message += f"   🔗 <a href=\"{url}\">Ссылка</a>\n"
+            message += "\n"
+
+        await update.message.reply_text(message, parse_mode="HTML", disable_web_page_preview=True)
+
+    except Exception as e:
+        log(f"Error in /files command: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+
+# =============================================================================
+# КОМАНДА /UPLOAD - ЗАГРУЗКА ФАЙЛА
+# =============================================================================
+
+async def upload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /upload - начало загрузки файла."""
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Доступ запрещён.")
+        return
+
+    await update.message.reply_text(
+        "📤 <b>Загрузка файла</b>\n\n"
+        "Отправьте файл или прямую ссылку на него.\n"
+        "После загрузки можно будет переименовать файл.\n"
+        "Для отмены напишите /cancel",
+        parse_mode="HTML"
+    )
+    context.user_data["upload_step"] = 1
+    context.user_data["upload_data"] = {}
+
+
+async def upload_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик ввода для мастера загрузки файла."""
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        return
+
+    if "upload_step" not in context.user_data:
+        return
+
+    step = context.user_data["upload_step"]
+    data = context.user_data.get("upload_data", {})
+
+    # Шаг 1: Получение файла или ссылки
+    if step == 1:
+        # Проверяем, есть ли документ
+        if update.message.document:
+            document = update.message.document
+            file_name = document.file_name
+            file_size = document.file_size
+
+            # Ограничение на размер (опционально, можно убрать)
+            if file_size and file_size > 100 * 1024 * 1024:
+                await update.message.reply_text(
+                    f"❌ Файл слишком большой ({file_size / 1024 / 1024:.1f}MB).\n"
+                    "Максимальный размер: 100MB."
+                )
+                return
+
+            temp_dir = tempfile.mkdtemp()
+            temp_file_path = os.path.join(temp_dir, file_name)
+
+            try:
+                file = await context.bot.get_file(document.file_id)
+                file_url = file.file_path
+
+                async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
+                    async with client.stream("GET", file_url) as response:
+                        response.raise_for_status()
+                        with open(temp_file_path, "wb") as f:
+                            async for chunk in response.aiter_bytes():
+                                f.write(chunk)
+
+                data["temp_file_path"] = temp_file_path
+                data["original_name"] = file_name
+                data["size"] = os.path.getsize(temp_file_path)
+
+                context.user_data["upload_data"] = data
+                context.user_data["upload_step"] = 2
+
+                await update.message.reply_text(
+                    f"✅ Файл получен.\n"
+                    f"📦 Размер: {data['size'] / 1024 / 1024:.1f} MB\n"
+                    f"📄 Исходное имя: {file_name}\n\n"
+                    f"Хотите переименовать файл? Отправьте новое имя или напишите 'нет' чтобы оставить как есть.\n"
+                    f"Для отмены напишите /cancel",
+                    parse_mode="HTML"
+                )
+                return
+
+            except Exception as e:
+                log(f"Error downloading file from Telegram: {e}")
+                await update.message.reply_text(f"❌ Ошибка загрузки файла: {e}")
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                context.user_data.clear()
+                return
+
+        # Проверяем, есть ли текст (ссылка)
+        if update.message.text:
+            url = update.message.text.strip()
+            if not (url.startswith("http://") or url.startswith("https://")):
+                await update.message.reply_text("❌ Это не похоже на URL. Отправьте корректную ссылку или файл.")
+                return
+
+            data["temp_url"] = url
+            context.user_data["upload_data"] = data
+            context.user_data["upload_step"] = 1.5  # Промежуточный шаг для скачивания
+
+            await update.message.reply_text("⏳ Скачивание файла по ссылке...")
+
+            try:
+                temp_dir = tempfile.mkdtemp()
+                # Пытаемся получить имя файла из URL
+                filename = url.rsplit("/", 1)[-1]
+                if not filename or "." not in filename:
+                    filename = "downloaded_file"
+                temp_file_path = os.path.join(temp_dir, filename)
+
+                async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
+                    async with client.stream("GET", url) as response:
+                        response.raise_for_status()
+                        with open(temp_file_path, "wb") as f:
+                            async for chunk in response.aiter_bytes():
+                                f.write(chunk)
+
+                # Проверяем, что файл скачался
+                if not os.path.exists(temp_file_path) or os.path.getsize(temp_file_path) == 0:
+                    await update.message.reply_text("❌ Файл не скачался или пустой.")
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    context.user_data.clear()
+                    return
+
+                data["temp_file_path"] = temp_file_path
+                data["original_name"] = filename
+                data["size"] = os.path.getsize(temp_file_path)
+
+                context.user_data["upload_data"] = data
+                context.user_data["upload_step"] = 2
+
+                await update.message.reply_text(
+                    f"✅ Файл скачан.\n"
+                    f"📦 Размер: {data['size'] / 1024 / 1024:.1f} MB\n"
+                    f"📄 Исходное имя: {filename}\n\n"
+                    f"Хотите переименовать файл? Отправьте новое имя или напишите 'нет' чтобы оставить как есть.\n"
+                    f"Для отмены напишите /cancel",
+                    parse_mode="HTML"
+                )
+                return
+
+            except Exception as e:
+                log(f"Error downloading file from URL: {e}")
+                await update.message.reply_text(f"❌ Ошибка скачивания файла: {e}")
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                context.user_data.clear()
+                return
+
+        await update.message.reply_text("❌ Отправьте файл или прямую ссылку на него.")
+        return
+
+    # Шаг 2: Переименование (опционально)
+    if step == 2:
+        user_input = update.message.text.strip()
+
+        if user_input.lower() in ["нет", "no", "cancel", "отмена"]:
+            # Оставляем исходное имя
+            filename = data["original_name"]
+        else:
+            # Используем введенное имя
+            filename = user_input
+
+        # Валидация имени файла
+        if not filename or "/" in filename or "\\" in filename or ".." in filename:
+            await update.message.reply_text(
+                "❌ Некорректное имя файла. Используйте только латинские буквы, цифры, дефис и подчёркивание.\n"
+                "Отправьте новое имя или напишите 'нет' чтобы оставить как есть."
+            )
+            return
+
+        # Сохраняем файл
+        try:
+            FILES_DIR.mkdir(parents=True, exist_ok=True)
+            dest_path = FILES_DIR / filename
+
+            # Если файл с таким именем уже существует, добавляем суффикс
+            if dest_path.exists():
+                base, ext = os.path.splitext(filename)
+                counter = 1
+                while dest_path.exists():
+                    filename = f"{base}_{counter}{ext}"
+                    dest_path = FILES_DIR / filename
+                    counter += 1
+
+            shutil.move(data["temp_file_path"], str(dest_path))
+            os.chmod(dest_path, 0o644)
+
+            # Сохраняем в конфиг
+            files_data = load_files()
+            timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            # Формируем URL
+            server_domain = SERVER_DOMAIN or os.environ.get("SERVER_DOMAIN", "")
+            if server_domain:
+                file_url = f"https://{server_domain}/files/{filename}"
+            else:
+                file_url = f"/files/{filename}"
+
+            file_entry = {
+                "filename": filename,
+                "original_name": data["original_name"],
+                "size": data["size"],
+                "uploaded": timestamp,
+                "url": file_url
+            }
+
+            files_data["files"].append(file_entry)
+            save_files(files_data)
+
+            # Очищаем контекст
+            temp_dir = os.path.dirname(data["temp_file_path"])
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            context.user_data.clear()
+
+            await update.message.reply_text(
+                f"✅ <b>Файл загружен!</b>\n\n"
+                f"📄 Имя: {filename}\n"
+                f"📦 Размер: {data['size'] / 1024 / 1024:.1f} MB\n"
+                f"🔗 Ссылка: <a href=\"{file_url}\">{file_url}</a>",
+                parse_mode="HTML"
+            )
+
+            log(f"File uploaded: {filename} (original: {data['original_name']}, size: {data['size']})")
+            return
+
+        except Exception as e:
+            log(f"Error saving file: {e}")
+            await update.message.reply_text(f"❌ Ошибка сохранения файла: {e}")
+            temp_dir = os.path.dirname(data.get("temp_file_path", ""))
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            context.user_data.clear()
+            return
+
+
+# =============================================================================
+# КОМАНДА /DELFILE - УДАЛЕНИЕ ФАЙЛА
+# =============================================================================
+
+async def delfile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /delfile - начало удаления файла."""
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Доступ запрещён.")
+        return
+
+    try:
+        data = load_files()
+        files = data.get("files", [])
+
+        if not files:
+            await update.message.reply_text("📁 Список файлов пуст.")
+            return
+
+        # Создаем инлайн-клавиатуру со списком файлов
+        keyboard = []
+        for i, file in enumerate(files):
+            filename = file.get("filename", "Unknown")
+            original_name = file.get("original_name", filename)
+            keyboard.append([InlineKeyboardButton(f"📄 {original_name}", callback_data=f"delfile_{i}")])
+
+        keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="delfile_cancel")])
+
+        await update.message.reply_text(
+            "🗑️ <b>Удаление файла</b>\n\n"
+            "Выберите файл для удаления:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    except Exception as e:
+        log(f"Error in /delfile command: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+
+async def delfile_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик выбора файла для удаления."""
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.callback_query.answer("❌ Доступ запрещён.")
+        return
+
+    query = update.callback_query
+    action = query.data
+
+    if action == "delfile_cancel":
+        await query.edit_message_text("❌ Удаление файла отменено.")
+        return
+
+    if action.startswith("delfile_"):
+        try:
+            file_idx = int(action.split("_")[1])
+            data = load_files()
+            files = data.get("files", [])
+
+            if file_idx >= len(files):
+                await query.edit_message_text("❌ Файл не найден.")
+                return
+
+            file = files[file_idx]
+            filename = file.get("filename", "")
+            original_name = file.get("original_name", filename)
+
+            # Показываем подтверждение
+            keyboard = [
+                [InlineKeyboardButton("✅ Да, удалить", callback_data=f"delfile_confirm_{file_idx}")],
+                [InlineKeyboardButton("❌ Нет, отмена", callback_data="delfile_cancel_action")]
+            ]
+
+            await query.edit_message_text(
+                f"🗑️ <b>Подтверждение удаления</b>\n\n"
+                f"Файл: <b>{original_name}</b>\n"
+                f"Имя: <code>{filename}</code>\n\n"
+                f"Вы уверены? Это действие нельзя отменить.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+
+        except ValueError:
+            await query.edit_message_text("❌ Ошибка: некорректный индекс файла.")
+        except Exception as e:
+            log(f"Error in delfile_callback: {e}")
+            await query.edit_message_text(f"❌ Ошибка: {e}")
+
+
+async def delfile_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик подтверждения удаления файла."""
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.callback_query.answer("❌ Доступ запрещён.")
+        return
+
+    query = update.callback_query
+    action = query.data
+
+    if action.startswith("delfile_confirm_"):
+        try:
+            file_idx = int(action.split("_")[2])
+            data = load_files()
+            files = data.get("files", [])
+
+            if file_idx >= len(files):
+                await query.edit_message_text("❌ Файл не найден.")
+                return
+
+            file = files[file_idx]
+            filename = file.get("filename", "")
+            original_name = file.get("original_name", filename)
+
+            # Удаляем файл из файловой системы
+            filepath = FILES_DIR / filename
+            if filepath.exists():
+                os.remove(filepath)
+
+            # Удаляем из конфига
+            files.pop(file_idx)
+            data["files"] = files
+            save_files(data)
+
+            await query.edit_message_text(
+                f"✅ <b>Файл удалён!</b>\n\n"
+                f"📄 {original_name} ({filename})",
+                parse_mode="HTML"
+            )
+
+            log(f"File deleted: {filename}")
+
+        except (ValueError, IndexError):
+            await query.edit_message_text("❌ Ошибка: файл не найден.")
+        except Exception as e:
+            log(f"Error deleting file: {e}")
+            await query.edit_message_text(f"❌ Ошибка удаления: {e}")
+
+
+async def delfile_cancel_action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик отмены удаления."""
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.callback_query.answer("❌ Доступ запрещён.")
+        return
+
+    await update.callback_query.edit_message_text("❌ Удаление файла отменено.")
 
 
 # =============================================================================
@@ -1022,7 +1542,15 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id != ADMIN_ID:
         return
 
-    if "addapp_step" in context.user_data:
+    if "upload_step" in context.user_data:
+        # Очищаем временные файлы
+        data = context.user_data.get("upload_data", {})
+        if "temp_file_path" in data:
+            temp_dir = os.path.dirname(data["temp_file_path"])
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        context.user_data.clear()
+        await update.message.reply_text("❌ Загрузка файла отменена.", reply_markup=ReplyKeyboardRemove())
+    elif "addapp_step" in context.user_data:
         # Очищаем временные файлы
         data = context.user_data.get("addapp_data", {})
         if "temp_apk_path" in data:
@@ -1797,6 +2325,11 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Доступ запрещён.")
         return
 
+    # Если активен мастер /upload — передаём управление туда
+    if "upload_step" in context.user_data:
+        await upload_handle_input(update, context)
+        return
+
     # Если активен мастер /addapp — передаём управление туда
     if "addapp_step" in context.user_data:
         await addapp_handle_input(update, context)
@@ -1809,7 +2342,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     document = update.message.document
     file_name = document.file_name
-    
+
     if not file_name.lower().endswith(".apk"):
         await update.message.reply_text("❌ Это не APK файл.")
         return
@@ -1957,14 +2490,26 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик inline-кнопок."""
     query = update.callback_query
     await query.answer()
-    
+
     user_id = query.from_user.id
     if user_id != ADMIN_ID:
         await query.edit_message_text("❌ Доступ запрещён.")
         return
-    
+
     data = query.data
-    
+
+    # Обработчик удаления файлов
+    if data.startswith("delfile_"):
+        if data == "delfile_cancel":
+            await delfile_callback(update, context)
+        elif data.startswith("delfile_confirm_"):
+            await delfile_confirm_callback(update, context)
+        elif data == "delfile_cancel_action":
+            await delfile_cancel_action_callback(update, context)
+        else:
+            await delfile_callback(update, context)
+        return
+
     if data == "cancel":
         await query.edit_message_text("❌ Отменено.")
         if "temp_apk_path" in context.user_data:
@@ -1972,20 +2517,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             shutil.rmtree(temp_dir, ignore_errors=True)
             context.user_data.clear()
         return
-    
+
     if data.startswith("select_"):
         app_idx = int(data.split("_")[1])
-        
+
         temp_apk_path = context.user_data.get("temp_apk_path")
         file_name = context.user_data.get("file_name", "unknown.apk")
         new_version = context.user_data.get("new_version", "неизвестно")
-        
+
         if not temp_apk_path or not os.path.exists(temp_apk_path):
             await query.edit_message_text("❌ Файл не найден. Отправьте APK ещё раз.")
             return
-        
+
         await process_update(update, context, app_idx, temp_apk_path, file_name, new_version)
-    
+
     elif data.startswith("confirm_"):
         app_idx = int(data.split("_")[1])
 
@@ -2148,7 +2693,9 @@ def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Проверяем активные шаги и вызываем соответствующий обработчик
-    if "addapp_step" in context.user_data:
+    if "upload_step" in context.user_data:
+        return upload_handle_input(update, context)
+    elif "addapp_step" in context.user_data:
         return addapp_handle_input(update, context)
     elif "removeapp_step" in context.user_data:
         return removeapp_handle_input(update, context)
@@ -2156,7 +2703,7 @@ def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if context.user_data.get("updateapp_confirm"):
             return updateapp_confirm_handle(update, context)
         return updateapp_handle_input(update, context)
-    
+
     # Если нет активного мастера — игнорируем текст (чтобы не спамить ошибками)
 
 
@@ -2180,6 +2727,9 @@ async def run_bot():
         bot_application.add_handler(CommandHandler("addapp", addapp_command))
         bot_application.add_handler(CommandHandler("removeapp", removeapp_command))
         bot_application.add_handler(CommandHandler("updateapp", updateapp_command))
+        bot_application.add_handler(CommandHandler("files", files_command))
+        bot_application.add_handler(CommandHandler("upload", upload_command))
+        bot_application.add_handler(CommandHandler("delfile", delfile_command))
         bot_application.add_handler(CommandHandler("cancel", cancel_command))
         bot_application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
         bot_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_input))
