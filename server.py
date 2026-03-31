@@ -4,6 +4,8 @@
 """
 
 import os
+import logging
+from logging.handlers import RotatingFileHandler
 import re
 import json
 import subprocess
@@ -46,6 +48,15 @@ APKS_DIR = BASE_DIR / "apks"
 FILES_DIR = BASE_DIR / "files"
 LOG_FILE = BASE_DIR / "logs" / "server.log"
 
+# Настройка ротации логов
+logger = logging.getLogger("tinstaller")
+logger.setLevel(logging.INFO)
+LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+handler = RotatingFileHandler(str(LOG_FILE), maxBytes=5*1024*1024, backupCount=3, encoding="utf-8")
+formatter = logging.Formatter('[%(asctime)s][%(process)d][%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+
 # Переменные окружения
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
@@ -59,17 +70,16 @@ UPDATE_CHECK_INTERVAL_HOURS = int(os.environ.get("UPDATE_CHECK_INTERVAL_HOURS", 
 # ЛОГИРОВАНИЕ
 # =============================================================================
 
-def log(message: str):
-    """Логирование в файл и консоль."""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_entry = f"[{timestamp}] {message}"
-    print(log_entry)
-    try:
-        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(log_entry + "\n")
-    except Exception as e:
-        print(f"Error writing to log: {e}")
+def log(message: str, level: str = "info"):
+    """Логирование в файл и консоль с ротацией."""
+    log_entry = f"{message}"
+    print(f"[LOG][{os.getpid()}] {log_entry}")
+    if level == "error":
+        logger.error(log_entry)
+    elif level == "warning":
+        logger.warning(log_entry)
+    else:
+        logger.info(log_entry)
 
 
 # =============================================================================
@@ -727,7 +737,7 @@ async def updateall_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Доступ запрещён.")
         return
 
-    await update.message.reply_text("🔄 Запуск обновления всех приложений...")
+    await update.message.reply_text("🔄 Запуск обновления всех приложений...\n⏳ Это может занять несколько минут.")
     await update_all_apps()
     await update.message.reply_text("✅ Обновление завершено.")
 
@@ -796,7 +806,8 @@ async def upload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📤 <b>Загрузка файла</b>\n\n"
         "Отправьте файл или прямую ссылку на него.\n"
         "После загрузки можно будет переименовать файл.\n"
-        "Для отмены напишите /cancel",
+        "Для отмены напишите /cancel\n"
+        "⏳ Если файл большой, загрузка может занять время.",
         parse_mode="HTML"
     )
     context.user_data["upload_step"] = 1
@@ -1178,7 +1189,8 @@ async def addapp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📲 <b>Добавление нового приложения</b>\n\n"
         "Шаг 1/6: Отправьте APK файл или прямую ссылку на него.\n"
-        "Для отмены напишите /cancel",
+        "Для отмены напишите /cancel\n"
+        "⏳ Если файл большой, загрузка может занять время.",
         parse_mode="HTML"
     )
     context.user_data["addapp_step"] = 1
