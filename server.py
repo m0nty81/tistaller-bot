@@ -168,6 +168,48 @@ def sha256_file(filepath: str) -> str:
     return sha256.hexdigest()
 
 
+def get_filename_from_response(response: httpx.Response, url: str, default_name: str = "temp.apk") -> str:
+    """Определить имя файла по ответу HTTP или по исходному URL."""
+    content_disposition = response.headers.get("content-disposition", "")
+    if content_disposition:
+        match = re.search(r"filename\*?=\s*(?:UTF-8''?)?\"?([^\";]+)\"?", content_disposition, re.IGNORECASE)
+        if match:
+            filename = os.path.basename(match.group(1).strip().strip('"'))
+            if filename:
+                return filename
+
+    filename = Path(response.url.path).name
+    if filename:
+        return filename
+
+    filename = Path(url).name
+    if filename:
+        return filename
+
+    return default_name
+
+
+async def download_apk_from_url(url: str, temp_dir: str, default_filename: str = "temp.apk") -> tuple[str, str]:
+    """Скачать APK по URL с поддержкой редиректов и вернуть путь + имя файла."""
+    os.makedirs(temp_dir, exist_ok=True)
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0), follow_redirects=True) as client:
+        async with client.stream("GET", url) as response:
+            response.raise_for_status()
+            filename = get_filename_from_response(response, url, default_filename)
+            if not filename.lower().endswith(".apk"):
+                filename = default_filename
+            temp_apk_path = os.path.join(temp_dir, filename)
+            with open(temp_apk_path, "wb") as f:
+                async for chunk in response.aiter_bytes():
+                    f.write(chunk)
+
+    if not os.path.exists(temp_apk_path) or os.path.getsize(temp_apk_path) == 0:
+        raise ValueError("Downloaded file is empty")
+
+    return temp_apk_path, filename
+
+
 # =============================================================================
 # ЗАГРУЗКА/СОХРАНЕНИЕ КОНФИГА
 # =============================================================================
@@ -1235,7 +1277,7 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
                 file = await context.bot.get_file(document.file_id)
                 file_url = file.file_path
 
-                async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(300.0), follow_redirects=True) as client:
                     async with client.stream("GET", file_url) as response:
                         response.raise_for_status()
                         with open(temp_apk_path, "wb") as f:
@@ -1281,36 +1323,21 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             try:
                 temp_dir = tempfile.mkdtemp()
-                # Пытаемся получить имя файла из URL
-                filename = url.rsplit("/", 1)[-1]
-                if not filename.lower().endswith(".apk"):
-                    filename = "temp.apk"
-                temp_apk_path = os.path.join(temp_dir, filename)
+                temp_apk_path, filename = await download_apk_from_url(url, temp_dir)
 
-                async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
-                    async with client.stream("GET", url) as response:
-                        response.raise_for_status()
-                        with open(temp_apk_path, "wb") as f:
-                            async for chunk in response.aiter_bytes():
-                                f.write(chunk)
-
-                # Проверяем, что это APK
-                if not os.path.exists(temp_apk_path) or os.path.getsize(temp_apk_path) == 0:
-                    await update.message.reply_text("❌ Файл не скачался или пустой.")
-                    shutil.rmtree(temp_dir, ignore_errors=True)
-                    context.user_data.clear()
-                    return
-
+                file_size = os.path.getsize(temp_apk_path)
                 version = parse_version_from_apk(temp_apk_path)
                 data["temp_apk_path"] = temp_apk_path
                 data["version"] = version
                 data["source_method"] = "manual"
+                data["temp_url"] = url
+                data["source_update"] = url
 
                 context.user_data["addapp_data"] = data
                 context.user_data["addapp_step"] = 2
 
                 await update.message.reply_text(
-                    f"✅ Файл скачан.\n"
+                    f"✅ Файл скачан ({file_size / 1024 / 1024:.1f}MB).\n"
                     f"📦 Версия: {version}\n\n"
                     f"Шаг 2/6: Введите название приложения (латиницей, без пробелов и спецсимволов).\n"
                     f"Это название будет использовано для имени файла.\n"
@@ -1386,7 +1413,7 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
                 row = []
         if row:
             keyboard.append(row)
-        keyboard.append([KeyboardButton("➕ Новая категория")])
+        keyboard.append([KeyboardButton("Новая категория")])
 
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
 
@@ -1405,7 +1432,8 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text("❌ Категория не может быть пустой.")
             return
 
-        if category == "➕ Новая категория":
+        normalized_category = category.lower()
+        if normalized_category in ["➕ новая категория", "новая категория"]:
             await update.message.reply_text(
                 "Введите название новой категории:",
                 reply_markup=ReplyKeyboardRemove()
@@ -1474,13 +1502,24 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             # Завершаем добавление
             await finalize_addapp(update, context, data)
         else:
-            context.user_data["addapp_step"] = 6
-            await update.message.reply_text(
-                f"✅ Метод: direct\n\n"
-                f"Шаг 6/6: Отправьте прямую ссылку на APK файл для обновлений.\n"
-                f"Для отмены напишите /cancel",
-                reply_markup=ReplyKeyboardRemove()
-            )
+            if data.get("temp_url"):
+                data["source_update"] = data.get("temp_url")
+                context.user_data["addapp_data"] = data
+                await update.message.reply_text(
+                    f"✅ Метод: direct\n\n"
+                    f"Используется ссылка, указанная ранее.\n"
+                    f"Приложение будет добавлено с автопроверкой обновлений по этой ссылке.",
+                    reply_markup=ReplyKeyboardRemove()
+                )
+                await finalize_addapp(update, context, data)
+            else:
+                context.user_data["addapp_step"] = 6
+                await update.message.reply_text(
+                    f"✅ Метод: direct\n\n"
+                    f"Шаг 6/6: Отправьте прямую ссылку на APK файл для обновлений.\n"
+                    f"Для отмены напишите /cancel",
+                    reply_markup=ReplyKeyboardRemove()
+                )
         return
 
     # Шаг 6: Ссылка для direct
@@ -1846,7 +1885,7 @@ async def updateapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
                 file = await context.bot.get_file(document.file_id)
                 file_url = file.file_path
 
-                async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(300.0), follow_redirects=True) as client:
                     async with client.stream("GET", file_url) as response:
                         response.raise_for_status()
                         with open(temp_apk_path, "wb") as f:
@@ -1944,23 +1983,7 @@ async def updateapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
 
                 try:
                     temp_dir = tempfile.mkdtemp()
-                    filename = text.rsplit("/", 1)[-1]
-                    if not filename.lower().endswith(".apk"):
-                        filename = "temp.apk"
-                    temp_apk_path = os.path.join(temp_dir, filename)
-
-                    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
-                        async with client.stream("GET", text) as response:
-                            response.raise_for_status()
-                            with open(temp_apk_path, "wb") as f:
-                                async for chunk in response.aiter_bytes():
-                                    f.write(chunk)
-
-                    if not os.path.exists(temp_apk_path) or os.path.getsize(temp_apk_path) == 0:
-                        await update.message.reply_text("❌ Файл не скачался или пустой.")
-                        shutil.rmtree(temp_dir, ignore_errors=True)
-                        context.user_data.clear()
-                        return
+                    temp_apk_path, filename = await download_apk_from_url(text, temp_dir)
 
                     version = parse_version_from_apk(temp_apk_path)
                     data["temp_apk_path"] = temp_apk_path
@@ -2116,7 +2139,7 @@ async def updateapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
                 file = await context.bot.get_file(document.file_id)
                 file_url = file.file_path
 
-                async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(300.0), follow_redirects=True) as client:
                     async with client.stream("GET", file_url) as response:
                         response.raise_for_status()
                         with open(temp_apk_path, "wb") as f:
@@ -2143,23 +2166,7 @@ async def updateapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
 
                 try:
                     temp_dir = tempfile.mkdtemp()
-                    filename = text.rsplit("/", 1)[-1]
-                    if not filename.lower().endswith(".apk"):
-                        filename = "temp.apk"
-                    temp_apk_path = os.path.join(temp_dir, filename)
-
-                    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
-                        async with client.stream("GET", text) as response:
-                            response.raise_for_status()
-                            with open(temp_apk_path, "wb") as f:
-                                async for chunk in response.aiter_bytes():
-                                    f.write(chunk)
-
-                    if not os.path.exists(temp_apk_path) or os.path.getsize(temp_apk_path) == 0:
-                        await update.message.reply_text("❌ Файл не скачался или пустой.")
-                        shutil.rmtree(temp_dir, ignore_errors=True)
-                        context.user_data.clear()
-                        return
+                    temp_apk_path, filename = await download_apk_from_url(text, temp_dir)
 
                     version = parse_version_from_apk(temp_apk_path)
                     app_idx = context.user_data.get("updateapp_app_idx")
@@ -2386,7 +2393,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             raise
         
-        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0), follow_redirects=True) as client:
             async with client.stream("GET", file_url) as response:
                 response.raise_for_status()
                 with open(temp_apk_path, "wb") as f:

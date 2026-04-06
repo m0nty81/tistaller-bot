@@ -53,6 +53,7 @@ files/
 gunicorn.ctl
 web-serv.code-workspace
 service/*.service
+files/
 
 # Temporary files
 *.tmp

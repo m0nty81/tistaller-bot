@@ -9,6 +9,7 @@ Flask API server and Telegram bot for managing and distributing Android TV appli
 - 🚀 **Flask API** - Serve APK files with rate limiting
 - 🤖 **Telegram Bot** - Update apps by sending APK files directly to the bot
 - 🔄 **Auto-updater** - Scheduled task to fetch latest versions from external sources
+- 🌐 **Redirect-aware direct downloads** - direct APK URL support now handles redirecting links like Telegram beta URLs
 - 📊 **Smart Matching** - Automatically matches APK files to apps by name
 - 🔒 **Admin-only Access** - Only authorized users can upload updates
 - ⚙️ **Unified Service** - All components in a single systemd service
@@ -137,6 +138,7 @@ sudo systemctl restart tinstaller
 ## Update Methods
 
 ### 1. direct - Direct APK URL
+Direct URLs may include redirects; the bot now follows them and downloads the final APK file.
 ```json
 {
   "sourceUpdate": "http://example.com/apps/Aerial_Dream.apk",
