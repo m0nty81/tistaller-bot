@@ -80,6 +80,18 @@ sudo systemctl enable tinstaller
 sudo systemctl start tinstaller
 ```
 
+### Логирование
+
+Сервис пишет основной файл логов в `logs/server.log`.
+Если вы запускаете сервер вручную с перенаправлением вывода, то `logs/server.out` также используется.
+
+Для ротации `server.log`, `server.out` и `update.log` скопируйте конфигурацию логрейтера:
+
+```bash
+sudo cp service/tinstaller.logrotate.conf /etc/logrotate.d/tinstaller
+sudo logrotate -f /etc/logrotate.d/tinstaller
+```
+
 ## Структура проекта
 
 ```
@@ -99,14 +111,14 @@ tinstaller/
 
 ## API Endpoints
 
-| Endpoint               | Описание                                                     |
-| ---------------------- | ------------------------------------------------------------ |
-| `GET /`                | Список всех приложений                                       |
-| `GET /apks/<filename>` | Скачать APK файл                                             |
-| `GET /files`           | Список всех загруженных файлов (JSON)                        |
-| `GET /files/<filename>`| Скачать произвольный файл                                    |
-| `GET /health`          | Проверка работоспособности                                   |
-| `POST /update`         | Ручной запуск проверки обновлений (требуется `X-Auth-Token`) |
+| Endpoint                | Описание                                                     |
+| ----------------------- | ------------------------------------------------------------ |
+| `GET /`                 | Список всех приложений                                       |
+| `GET /apks/<filename>`  | Скачать APK файл                                             |
+| `GET /files`            | Список всех загруженных файлов (JSON)                        |
+| `GET /files/<filename>` | Скачать произвольный файл                                    |
+| `GET /health`           | Проверка работоспособности                                   |
+| `POST /update`          | Ручной запуск проверки обновлений (требуется `X-Auth-Token`) |
 
 ## Telegram бот команды
 
@@ -131,12 +143,14 @@ tinstaller/
 Пошаговый мастер (6 шагов):
 
 1. **APK или ссылка** — отправьте APK файл или прямую ссылку на него
+   - если на шаге 1 указать GitHub-репозиторий, бот автоматически выберет новый GitHub-источник
 2. **Название** — введите название латиницей (используется для имени файла)
 3. **Описание** — краткое описание приложения
 4. **Категория** — выберите из существующих или введите новую
 5. **Метод обновлений**:
    - `manual` — нет внешнего источника, обновления только через бота
    - `direct` — прямая ссылка на APK для автообновлений, поддерживаются ссылки с редиректами (например `http://telegram.org/dl/android/apk-public-beta`)
+   - `github` — GitHub Releases по `releases/latest` для периодических автообновлений
 6. **Ссылка** (для `direct`) — URL для автоматической проверки обновлений
 
 > Если вы указали ссылку на шаге 1 и затем выбрали `direct` на шаге 5, бот автоматически использует ранее введённый URL и не просит ввести его повторно.
@@ -279,7 +293,7 @@ sudo systemctl restart tinstaller
       "description": "Описание",
       "url": "https://YOUR_DOMAIN/apks/File.apk",
       "sourceUpdate": "https://external.com/app.apk или API URL",
-      "sourceMethod": "direct|github_release|gitlab_release|custom",
+      "sourceMethod": "direct|github|github_release|gitlab_release|custom",
       "sourceFilter": "паттерн для фильтрации (опционально)",
       "category": "Категория",
       "ver": "1.2.3",
@@ -311,6 +325,21 @@ sudo systemctl restart tinstaller
   "sourceMethod": "direct"
 }
 ```
+
+2. **github** - GitHub Releases repository source:
+
+```json
+{
+  "title": "TorrServer",
+  "sourceUpdate": "https://github.com/YouROK/TorrServe",
+  "sourceMethod": "github",
+  "sourceFilter": "universal"
+}
+```
+
+- Автоматически используется `releases/latest`.
+- Если `latest` отсутствует, бот выбирает самый свежий доступный релиз по дате публикации.
+- Если найден `universal`, он выбирается; иначе используются `v7a` и `v8a`.
 
 3. **github_release** - GitHub Releases API:
 

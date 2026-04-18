@@ -14,6 +14,7 @@ import tempfile
 import shutil
 from datetime import datetime
 from pathlib import Path
+import asyncio
 
 from dotenv import load_dotenv
 
@@ -65,6 +66,8 @@ SERVER_DOMAIN = os.environ.get("SERVER_DOMAIN", "")
 
 # Интервал проверки обновлений (в часах)
 UPDATE_CHECK_INTERVAL_HOURS = int(os.environ.get("UPDATE_CHECK_INTERVAL_HOURS", "6"))
+RETRY_DOWNLOAD_ATTEMPTS = int(os.environ.get("RETRY_DOWNLOAD_ATTEMPTS", "3"))
+RETRY_DOWNLOAD_DELAY = int(os.environ.get("RETRY_DOWNLOAD_DELAY", "5"))
 
 # =============================================================================
 # ЛОГИРОВАНИЕ
@@ -159,6 +162,71 @@ def parse_version_from_apk(apk_path: str) -> str:
     return "неизвестно"
 
 
+def parse_build_from_apk(apk_path: str) -> str:
+    """Извлечь versionCode (build) из APK файла."""
+    try:
+        result = subprocess.run(
+            ["/usr/bin/aapt", "dump", "badging", apk_path],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        match = re.search(r"versionCode='([^']+)'", result.stdout)
+        if match:
+            return match.group(1)
+    except Exception as e:
+        log(f"Error parsing build from APK: {e}")
+    return ""
+
+
+def format_version_display(version: str, build: str) -> str:
+    if not version or version == "неизвестно":
+        return version or "неизвестно"
+    if build and build != "неизвестно":
+        return f"{version} (build {build})"
+    return version
+
+
+def compare_builds(b1: str, b2: str) -> int:
+    if b1 == b2:
+        return 0
+    if not b2:
+        return 1
+    if not b1:
+        return -1
+
+    if b1.isdigit() and b2.isdigit():
+        return 1 if int(b1) > int(b2) else -1
+
+    return 1 if b1 > b2 else -1 if b1 < b2 else 0
+
+
+def compare_versions_with_build(v1: str, b1: str, v2: str, b2: str) -> int:
+    cmp = compare_versions(v1, v2)
+    if cmp != 0:
+        return cmp
+    return compare_builds(b1, b2)
+
+
+def get_installed_build(app: dict) -> str:
+    """Получить build/versionCode из установленного APK или из конфига."""
+    target_filename = get_target_filename(app)
+    apk_path = APKS_DIR / target_filename
+
+    if apk_path.exists():
+        build = parse_build_from_apk(str(apk_path))
+        if build:
+            return build
+
+    return app.get("build", "")
+
+
+def get_installed_version_display(app: dict) -> str:
+    version = get_installed_version(app)
+    build = get_installed_build(app)
+    return format_version_display(version, build)
+
+
 def sha256_file(filepath: str) -> str:
     """Вычислить SHA256 хэш файла."""
     sha256 = hashlib.sha256()
@@ -193,21 +261,172 @@ async def download_apk_from_url(url: str, temp_dir: str, default_filename: str =
     """Скачать APK по URL с поддержкой редиректов и вернуть путь + имя файла."""
     os.makedirs(temp_dir, exist_ok=True)
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0), follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0), follow_redirects=True) as client:
         async with client.stream("GET", url) as response:
             response.raise_for_status()
             filename = get_filename_from_response(response, url, default_filename)
             if not filename.lower().endswith(".apk"):
                 filename = default_filename
-            temp_apk_path = os.path.join(temp_dir, filename)
-            with open(temp_apk_path, "wb") as f:
-                async for chunk in response.aiter_bytes():
-                    f.write(chunk)
+
+    temp_apk_path = os.path.join(temp_dir, filename)
+    await stream_url_to_file_with_retry(url, temp_apk_path)
 
     if not os.path.exists(temp_apk_path) or os.path.getsize(temp_apk_path) == 0:
         raise ValueError("Downloaded file is empty")
 
     return temp_apk_path, filename
+
+
+async def stream_url_to_file_with_retry(url: str, file_path: str, retries: int = RETRY_DOWNLOAD_ATTEMPTS, delay: int = RETRY_DOWNLOAD_DELAY) -> None:
+    """Скачать URL в файл с несколькими попытками при сетевых ошибках."""
+    last_exception = None
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0), follow_redirects=True) as client:
+        for attempt in range(1, retries + 1):
+            try:
+                async with client.stream("GET", url) as response:
+                    response.raise_for_status()
+                    with open(file_path, "wb") as f:
+                        async for chunk in response.aiter_bytes():
+                            f.write(chunk)
+                return
+            except (httpx.RequestError, httpx.HTTPStatusError) as e:
+                if isinstance(e, httpx.HTTPStatusError) and e.response is not None and e.response.status_code < 500:
+                    log(f"  Ошибка HTTP {e.response.status_code}: {e}")
+                    raise
+                last_exception = e
+                log(f"  Попытка {attempt} не удалась: {e}")
+                if attempt < retries:
+                    log(f"  Повторная попытка через {delay} секунд...")
+                    await asyncio.sleep(delay)
+                else:
+                    raise
+            except Exception as e:
+                log(f"  Ошибка при скачивании: {e}")
+                raise
+
+
+def parse_github_repo_url(url: str) -> str | None:
+    """Вернуть owner/repo для GitHub URL или API URL."""
+    if not url:
+        return None
+
+    match = re.search(r"github\.com/([^/]+)/([^/]+)/?", url)
+    if match:
+        owner = match.group(1)
+        repo = match.group(2)
+        if repo.endswith(".git"):
+            repo = repo[:-4]
+        return f"{owner}/{repo}"
+
+    match = re.search(r"api\.github\.com/repos/([^/]+/[^/]+)", url)
+    if match:
+        repo = match.group(1)
+        if repo.endswith(".git"):
+            repo = repo[:-4]
+        return repo
+
+    return None
+
+
+def make_github_api_url(repo: str, endpoint: str = "releases/latest") -> str:
+    return f"https://api.github.com/repos/{repo}/{endpoint}"
+
+
+async def fetch_github_releases(repo: str, per_page: int = 5) -> list[dict]:
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            response = await client.get(make_github_api_url(repo, f"releases?per_page={per_page}"))
+            response.raise_for_status()
+            return response.json()
+    except Exception as e:
+        log(f"ERROR: GitHub fetch releases error: {e}")
+        return []
+
+
+async def fetch_github_release_latest(repo: str) -> dict | None:
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            response = await client.get(make_github_api_url(repo, "releases/latest"))
+            response.raise_for_status()
+            return response.json()
+    except Exception as e:
+        log(f"ERROR: GitHub fetch latest release error: {e}")
+        return None
+
+
+def find_github_latest_release(releases: list[dict]) -> dict | None:
+    return next(
+        (r for r in releases if not r.get("draft", False) and not r.get("prerelease", False)),
+        None,
+    )
+
+
+def parse_github_datetime(value: str | None) -> datetime:
+    if not value:
+        return datetime.min
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        return datetime.min
+
+
+def choose_github_auto_release(releases: list[dict]) -> dict | None:
+    if not releases:
+        return None
+
+    latest = find_github_latest_release(releases)
+    if latest:
+        return latest
+
+    valid = [r for r in releases if not r.get("draft", False)]
+    if not valid:
+        return None
+
+    return max(valid, key=lambda r: parse_github_datetime(r.get("published_at") or r.get("created_at")))
+
+
+def select_github_assets(assets: list[dict]) -> list[tuple[str, dict]]:
+    """Вернуть список выбранных asset-ов GitHub по архитектурам или universal."""
+    if not assets:
+        return []
+
+    universal = [a for a in assets if a.get("browser_download_url") and re.search(r"universal", a.get("name", ""), re.I)]
+    if universal:
+        return [("universal", universal[0])]
+
+    selected = []
+    for arch, pattern in [("v7a", r"v7a|armeabi-v7a"), ("v8a", r"v8a|arm64-v8a")]:
+        asset = next(
+            (a for a in assets if a.get("browser_download_url") and re.search(pattern, a.get("name", ""), re.I)),
+            None,
+        )
+        if asset:
+            selected.append((arch, asset))
+
+    if selected:
+        return selected
+
+    fallback = next(
+        (a for a in assets if a.get("browser_download_url") and a.get("name", "").lower().endswith(".apk")),
+        None,
+    )
+    if fallback:
+        return [("universal", fallback)]
+
+    return []
+
+
+def make_arch_source_filter(arch: str, asset_name: str | None = None) -> str:
+    if asset_name:
+        return re.escape(asset_name)
+    if arch == "universal":
+        return r"universal"
+    if arch == "v7a":
+        return r"v7a|armeabi-v7a"
+    if arch == "v8a":
+        return r"v8a|arm64-v8a"
+    return r".*\.apk$"
 
 
 # =============================================================================
@@ -266,6 +485,41 @@ async def get_download_url(app: dict) -> str | None:
     if source_method == "direct":
         return source_update
     
+    elif source_method == "github":
+        if not source_update:
+            log(f"ERROR: sourceUpdate обязателен для github")
+            return None
+        if not source_filter:
+            log(f"ERROR: sourceFilter обязателен для github")
+            return None
+
+        repo = parse_github_repo_url(source_update)
+        if not repo:
+            log(f"ERROR: Неверный github URL: {source_update}")
+            return None
+
+        try:
+            release = await fetch_github_release_latest(repo)
+            if not release:
+                releases = await fetch_github_releases(repo, per_page=10)
+                release = choose_github_auto_release(releases)
+
+            if not release:
+                log(f"ERROR: Не удалось найти релиз GitHub для {repo}")
+                return None
+
+            assets = release.get("assets", [])
+            for asset in assets:
+                name = asset.get("name", "")
+                if re.search(source_filter, name, re.I):
+                    return asset.get("browser_download_url")
+
+            log(f"ERROR: Не найден asset по фильтру: {source_filter}")
+            return None
+        except Exception as e:
+            log(f"ERROR: GitHub API error: {e}")
+            return None
+
     elif source_method == "github_release":
         if not source_filter:
             log(f"ERROR: sourceFilter обязателен для github_release")
@@ -393,12 +647,7 @@ async def update_single_app(app_idx: int, data: dict) -> bool:
 
     try:
         log(f"  Скачивание: {download_url}")
-        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0), follow_redirects=True) as client:
-            async with client.stream("GET", download_url) as response:
-                response.raise_for_status()
-                with open(temp_apk, "wb") as f:
-                    async for chunk in response.aiter_bytes():
-                        f.write(chunk)
+        await stream_url_to_file_with_retry(download_url, str(temp_apk))
 
         # Проверяем размер
         if not temp_apk.exists() or temp_apk.stat().st_size == 0:
@@ -406,11 +655,14 @@ async def update_single_app(app_idx: int, data: dict) -> bool:
             await send_telegram(f"❌ Пустой файл: <b>{title}</b>")
             return False
 
-        # Извлекаем версию из нового APK
+        # Извлекаем версию и build из нового APK
         new_ver = parse_version_from_apk(str(temp_apk))
-        log(f"  Версия из APK: {new_ver}")
+        new_build = parse_build_from_apk(str(temp_apk))
+        new_ver_display = format_version_display(new_ver, new_build)
+        log(f"  Версия из APK: {new_ver_display}")
 
         # Проверяем хэш только если файл существует
+        old_build = app.get("build", "")
         if apk_path.exists():
             old_hash = sha256_file(str(apk_path))
             new_hash = sha256_file(str(temp_apk))
@@ -419,27 +671,27 @@ async def update_single_app(app_idx: int, data: dict) -> bool:
                 log(f"  Пропущено (хэш совпадает)")
                 return False
 
-            old_ver_display = old_ver if old_ver else "неизвестно"
+            old_ver_display = format_version_display(old_ver, old_build)
 
-            # Сравниваем версии
-            cmp_result = compare_versions(new_ver, old_ver_display)
+            # Сравниваем версии и build
+            cmp_result = compare_versions_with_build(new_ver, new_build, old_ver, old_build)
 
             if cmp_result == -1:
                 # Новая версия < старой - пропускаем БЕЗ уведомления, файл НЕ заменяем
-                log(f"  Пропущено: версия понижается ({old_ver_display} → {new_ver})")
+                log(f"  Пропущено: версия понижается ({old_ver_display} → {new_ver_display})")
                 return False
 
             elif cmp_result == 0:
-                # Версии равны (пересборка) - пропускаем БЕЗ уведомления, файл НЕ заменяем
+                # Версии и build равны (пересборка) - пропускаем БЕЗ уведомления, файл НЕ заменяем
                 log(f"  Пропущено: версии равны ({old_ver_display}), хэш разный (пересборка)")
                 return False
 
             else:
                 # Новая версия > старой - заменяем файл
-                log(f"  Обновление: {old_ver_display} → {new_ver}")
+                log(f"  Обновление: {old_ver_display} → {new_ver_display}")
         else:
             # Новый файл (первая загрузка)
-            log(f"  Новый файл (первая загрузка), версия: {new_ver}")
+            log(f"  Новый файл (первая загрузка), версия: {new_ver_display}")
 
         # Копируем файл (перезаписываем существующий или создаём новый)
         shutil.move(str(temp_apk), str(apk_path))
@@ -448,22 +700,26 @@ async def update_single_app(app_idx: int, data: dict) -> bool:
         # Обновляем конфиг
         timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         data["apps"][app_idx]["ver"] = new_ver
+        data["apps"][app_idx]["build"] = new_build
         data["apps"][app_idx]["lastUpdated"] = timestamp
         save_apps(data)
 
         # Отправляем уведомление
-        old_ver_display = old_ver if old_ver else "неизвестно"
+        old_ver_display = format_version_display(old_ver, old_build)
         if old_ver:
-            await send_telegram(f"🔄 Обновлено: <b>{title}</b>\nВерсия: {old_ver_display} → {new_ver}")
+            await send_telegram(f"🔄 Обновлено: <b>{title}</b>\nВерсия: {old_ver_display} → {new_ver_display}")
         else:
-            await send_telegram(f"🆕 Добавлено: <b>{title}</b>\nВерсия: {new_ver}")
+            await send_telegram(f"🆕 Добавлено: <b>{title}</b>\nВерсия: {new_ver_display}")
 
         log(f"  Успешно обновлено")
         return True
 
     except Exception as e:
         log(f"  ERROR: {e}")
-        await send_telegram(f"❌ Ошибка обновления: <b>{title}</b>\n{e}")
+        await send_telegram(
+            f"❌ Ошибка обновления: <b>{title}</b>\n"
+            f"Не удалось скачать APK. Проверьте сеть и DNS.\n{e}"
+        )
         return False
 
     finally:
@@ -633,16 +889,113 @@ def download_file(filename):
 # TELEGRAM БОТ
 # =============================================================================
 
+async def delete_menu_messages(update: Update, context: ContextTypes.DEFAULT_TYPE, keep_menu: bool = False):
+    """Удалить текущее сообщение пользователя и предыдущий меню-сообщение.
+    Если keep_menu=True, сохраняем текущее меню и не удаляем menu_message_id."""
+    if update.message:
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+
+    if not keep_menu:
+        prev_id = context.user_data.get("menu_message_id")
+        if prev_id:
+            try:
+                await update.message.chat.delete_message(prev_id)
+            except Exception:
+                pass
+            context.user_data.pop("menu_message_id", None)
+
+
 def get_main_keyboard():
-    """Создать основную клавиатуру с командами."""
+    """Создать основную клавиатуру с разделами."""
     keyboard = [
-        [KeyboardButton("/apps"), KeyboardButton("/status")],
-        [KeyboardButton("/updateall"), KeyboardButton("/updateapp")],
-        [KeyboardButton("/addapp"), KeyboardButton("/removeapp")],
-        [KeyboardButton("/files"), KeyboardButton("/upload")],
-        [KeyboardButton("/delfile")],
+        [KeyboardButton("📱 Приложения"), KeyboardButton("📁 Файлы")],
+        [KeyboardButton("📊 Статус")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+
+
+def get_apps_keyboard():
+    keyboard = [
+        [KeyboardButton("📋 Список приложений"), KeyboardButton("🔄 Проверить все")],
+        [KeyboardButton("⚙️ Обновить приложение"), KeyboardButton("➕ Добавить приложение")],
+        [KeyboardButton("🗑️ Удалить приложение"), KeyboardButton("⬅️ Назад")],
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+
+
+def get_files_keyboard():
+    keyboard = [
+        [KeyboardButton("📂 Список файлов"), KeyboardButton("⬆️ Загрузить файл")],
+        [KeyboardButton("🗑️ Удалить файл"), KeyboardButton("⬅️ Назад")],
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+
+
+def get_menu_keyboard(context: ContextTypes.DEFAULT_TYPE):
+    current_menu = context.user_data.get("current_menu")
+    if current_menu == "apps":
+        return get_apps_keyboard()
+    if current_menu == "files":
+        return get_files_keyboard()
+    return get_main_keyboard()
+
+
+def clear_flow_state(context: ContextTypes.DEFAULT_TYPE):
+    preserved_keys = {"current_menu", "return_menu", "menu_message_id"}
+    preserved = {k: context.user_data[k] for k in preserved_keys if k in context.user_data}
+    context.user_data.clear()
+    context.user_data.update(preserved)
+
+
+async def restore_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    menu = context.user_data.pop("return_menu", None)
+    if menu == "apps":
+        await apps_menu_command(update, context)
+    elif menu == "files":
+        await files_menu_command(update, context)
+    else:
+        await start_command(update, context)
+
+
+async def apps_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать меню приложений."""
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Доступ запрещён.")
+        return
+
+    clear_flow_state(context)
+    await delete_menu_messages(update, context)
+    context.user_data["current_menu"] = "apps"
+    msg = await update.message.reply_text(
+        "📱 <b>Меню приложений</b>\n\n"
+        "Выберите действие:",
+        parse_mode="HTML",
+        reply_markup=get_apps_keyboard()
+    )
+    context.user_data["menu_message_id"] = msg.message_id
+
+
+async def files_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать меню файлов."""
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Доступ запрещён.")
+        return
+
+    clear_flow_state(context)
+    await delete_menu_messages(update, context)
+    context.user_data["current_menu"] = "files"
+    msg = await update.message.reply_text(
+        "📁 <b>Меню файлов</b>\n\n"
+        "Выберите действие:",
+        parse_mode="HTML",
+        reply_markup=get_files_keyboard()
+    )
+    context.user_data["menu_message_id"] = msg.message_id
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -652,21 +1005,30 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Доступ запрещён.")
         return
     
-    await update.message.reply_text(
-        "👋 Привет! Отправь мне APK-файл для обновления приложения.\n"
-        "Я найду приложение в списке и предложу обновить его.",
+    clear_flow_state(context)
+    await delete_menu_messages(update, context)
+    context.user_data["current_menu"] = "main"
+    msg = await update.message.reply_text(
+        "👋 Привет! Выберите раздел меню:\n"
+        "📱 Приложения — управление приложениями и обновлениями.\n"
+        "📁 Файлы — управление загруженными файлами.\n"
+        "📊 Статус — информация о сервере.",
         reply_markup=get_main_keyboard()
     )
+    context.user_data["menu_message_id"] = msg.message_id
 
 
 async def apps_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /apps - список всех приложений."""
     try:
+        clear_flow_state(context)
+        await delete_menu_messages(update, context, keep_menu=True)
+        context.user_data["current_menu"] = "apps"
         data = load_apps()
         apps = data.get("apps", [])
         
         if not apps:
-            await update.message.reply_text("📭 Список приложений пуст.")
+            await update.message.reply_text("📭 Список приложений пуст.", reply_markup=get_apps_keyboard())
             return
         
         message = "📦 <b>Доступные приложения:</b>\n\n"
@@ -683,7 +1045,7 @@ async def apps_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message += f"   📥 <a href=\"{url}\">{filename}</a>\n"
             message += "\n"
         
-        await update.message.reply_text(message, parse_mode="HTML", disable_web_page_preview=True)
+        await update.message.reply_text(message, parse_mode="HTML", disable_web_page_preview=True, reply_markup=get_apps_keyboard())
         
     except Exception as e:
         log(f"Error in /apps command: {e}")
@@ -693,6 +1055,9 @@ async def apps_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /status - информация о хосте и сервисах."""
     try:
+        clear_flow_state(context)
+        await delete_menu_messages(update, context, keep_menu=True)
+        context.user_data["current_menu"] = "main"
         # Загрузка CPU
         cpu_usage = "N/A"
         try:
@@ -765,7 +1130,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         log(f"/status executed: CPU={cpu_usage}, RAM={ram_usage}, SSD={disk_usage}, systemd={systemd_status}")
-        await update.message.reply_text(message, parse_mode="HTML", disable_web_page_preview=True)
+        await update.message.reply_text(message, parse_mode="HTML", disable_web_page_preview=True, reply_markup=get_main_keyboard())
 
     except Exception as e:
         log(f"Error in /status command: {e}")
@@ -796,6 +1161,9 @@ async def files_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
+        clear_flow_state(context)
+        await delete_menu_messages(update, context, keep_menu=True)
+        context.user_data["current_menu"] = "files"
         data = load_files()
         files = data.get("files", [])
 
@@ -803,7 +1171,8 @@ async def files_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 "📁 <b>Список файлов пуст</b>\n\n"
                 "Используйте /upload для загрузки файла.",
-                parse_mode="HTML"
+                parse_mode="HTML",
+                reply_markup=get_files_keyboard()
             )
             return
 
@@ -826,7 +1195,7 @@ async def files_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message += f"   🔗 <a href=\"{url}\">Ссылка</a>\n"
             message += "\n"
 
-        await update.message.reply_text(message, parse_mode="HTML", disable_web_page_preview=True)
+        await update.message.reply_text(message, parse_mode="HTML", disable_web_page_preview=True, reply_markup=get_files_keyboard())
 
     except Exception as e:
         log(f"Error in /files command: {e}")
@@ -852,6 +1221,7 @@ async def upload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⏳ Если файл большой, загрузка может занять время.",
         parse_mode="HTML"
     )
+    context.user_data["return_menu"] = context.user_data.get("current_menu", "main")
     context.user_data["upload_step"] = 1
     context.user_data["upload_data"] = {}
 
@@ -894,7 +1264,7 @@ async def upload_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
                 async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
                     async with client.stream("GET", file_url) as response:
                         response.raise_for_status()
-                        with open(temp_file_path, "wb") as f:
+                        with open(temp_apk_path, "wb") as f:
                             async for chunk in response.aiter_bytes():
                                 f.write(chunk)
 
@@ -919,7 +1289,8 @@ async def upload_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
                 log(f"Error downloading file from Telegram: {e}")
                 await update.message.reply_text(f"❌ Ошибка загрузки файла: {e}")
                 shutil.rmtree(temp_dir, ignore_errors=True)
-                context.user_data.clear()
+                clear_flow_state(context)
+                await restore_menu(update, context)
                 return
 
         # Проверяем, есть ли текст (ссылка)
@@ -954,7 +1325,8 @@ async def upload_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
                 if not os.path.exists(temp_file_path) or os.path.getsize(temp_file_path) == 0:
                     await update.message.reply_text("❌ Файл не скачался или пустой.")
                     shutil.rmtree(temp_dir, ignore_errors=True)
-                    context.user_data.clear()
+                    clear_flow_state(context)
+                    await restore_menu(update, context)
                     return
 
                 data["temp_file_path"] = temp_file_path
@@ -978,7 +1350,8 @@ async def upload_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
                 log(f"Error downloading file from URL: {e}")
                 await update.message.reply_text(f"❌ Ошибка скачивания файла: {e}")
                 shutil.rmtree(temp_dir, ignore_errors=True)
-                context.user_data.clear()
+                clear_flow_state(context)
+                await restore_menu(update, context)
                 return
 
         await update.message.reply_text("❌ Отправьте файл или прямую ссылку на него.")
@@ -1045,7 +1418,7 @@ async def upload_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             # Очищаем контекст
             temp_dir = os.path.dirname(data["temp_file_path"])
             shutil.rmtree(temp_dir, ignore_errors=True)
-            context.user_data.clear()
+            clear_flow_state(context)
 
             await update.message.reply_text(
                 f"✅ <b>Файл загружен!</b>\n\n"
@@ -1056,6 +1429,7 @@ async def upload_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
 
             log(f"File uploaded: {filename} (original: {data['original_name']}, size: {data['size']})")
+            await restore_menu(update, context)
             return
 
         except Exception as e:
@@ -1064,7 +1438,8 @@ async def upload_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             temp_dir = os.path.dirname(data.get("temp_file_path", ""))
             if temp_dir and os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir, ignore_errors=True)
-            context.user_data.clear()
+            clear_flow_state(context)
+            await restore_menu(update, context)
             return
 
 
@@ -1235,6 +1610,7 @@ async def addapp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⏳ Если файл большой, загрузка может занять время.",
         parse_mode="HTML"
     )
+    context.user_data["return_menu"] = context.user_data.get("current_menu", "main")
     context.user_data["addapp_step"] = 1
     context.user_data["addapp_data"] = {}
 
@@ -1285,8 +1661,11 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
                                 f.write(chunk)
 
                 version = parse_version_from_apk(temp_apk_path)
+                build = parse_build_from_apk(temp_apk_path)
+                version_display = format_version_display(version, build)
                 data["temp_apk_path"] = temp_apk_path
                 data["version"] = version
+                data["build"] = build
                 data["source_method"] = "manual"
 
                 context.user_data["addapp_data"] = data
@@ -1294,7 +1673,7 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 
                 await update.message.reply_text(
                     f"✅ Файл получен.\n"
-                    f"📦 Версия: {version}\n\n"
+                    f"📦 Версия: {version_display}\n\n"
                     f"Шаг 2/6: Введите название приложения (латиницей, без пробелов и спецсимволов).\n"
                     f"Это название будет использовано для имени файла (например, {version}.apk).\n"
                     f"Для отмены напишите /cancel",
@@ -1305,7 +1684,8 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             except Exception as e:
                 log(f"Error downloading file from Telegram: {e}")
                 await update.message.reply_text(f"❌ Ошибка загрузки файла: {e}")
-                context.user_data.clear()
+                clear_flow_state(context)
+                await restore_menu(update, context)
                 return
 
         # Проверяем, есть ли текст (ссылка)
@@ -1313,6 +1693,33 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             url = update.message.text.strip()
             if not (url.startswith("http://") or url.startswith("https://")):
                 await update.message.reply_text("❌ Это не похоже на URL. Отправьте корректную ссылку или APK файл.")
+                return
+
+            github_repo = parse_github_repo_url(url)
+            if github_repo:
+                releases = await fetch_github_releases(github_repo, per_page=10)
+                if not releases:
+                    await update.message.reply_text(
+                        "❌ Не удалось получить релизы из GitHub. Проверьте ссылку и попробуйте снова."
+                    )
+                    return
+
+                data["source_method"] = "github"
+                data["source_update"] = f"https://github.com/{github_repo}"
+                data["source_repo"] = github_repo
+                data["is_github_repo"] = True
+                data["github_releases"] = releases
+                data["github_latest_exists"] = bool(find_github_latest_release(releases))
+                context.user_data["addapp_data"] = data
+                context.user_data["addapp_step"] = 2
+
+                await update.message.reply_text(
+                    f"✅ GitHub репозиторий определен: {github_repo}\n"
+                    f"Шаг 2/6: Введите название приложения (латиницей, без пробелов и спецсимволов).\n"
+                    f"Это название будет использовано для имени файла.\n"
+                    f"Для отмены напишите /cancel",
+                    parse_mode="HTML"
+                )
                 return
 
             data["temp_url"] = url
@@ -1327,8 +1734,11 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 
                 file_size = os.path.getsize(temp_apk_path)
                 version = parse_version_from_apk(temp_apk_path)
+                build = parse_build_from_apk(temp_apk_path)
+                version_display = format_version_display(version, build)
                 data["temp_apk_path"] = temp_apk_path
                 data["version"] = version
+                data["build"] = build
                 data["source_method"] = "manual"
                 data["temp_url"] = url
                 data["source_update"] = url
@@ -1338,7 +1748,7 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 
                 await update.message.reply_text(
                     f"✅ Файл скачан ({file_size / 1024 / 1024:.1f}MB).\n"
-                    f"📦 Версия: {version}\n\n"
+                    f"📦 Версия: {version_display}\n\n"
                     f"Шаг 2/6: Введите название приложения (латиницей, без пробелов и спецсимволов).\n"
                     f"Это название будет использовано для имени файла.\n"
                     f"Для отмены напишите /cancel",
@@ -1350,7 +1760,8 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
                 log(f"Error downloading file from URL: {e}")
                 await update.message.reply_text(f"❌ Ошибка скачивания файла: {e}")
                 shutil.rmtree(temp_dir, ignore_errors=True)
-                context.user_data.clear()
+                clear_flow_state(context)
+                await restore_menu(update, context)
                 return
 
         await update.message.reply_text("❌ Отправьте APK файл или прямую ссылку на него.")
@@ -1445,17 +1856,31 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data["addapp_data"] = data
         context.user_data["addapp_step"] = 5
 
-        keyboard = [
-            [KeyboardButton("manual"), KeyboardButton("direct")],
-        ]
+        if data.get("is_github_repo"):
+            keyboard = [
+                [KeyboardButton("manual"), KeyboardButton("github")],
+            ]
+            update_text = (
+                f"Шаг 5/6: Выберите способ обновления:\n"
+                f"• <b>manual</b> — скачать выбранную версию из GitHub и больше не обновлять\n"
+                f"• <b>github</b> — автопроверка GitHub Releases по latest\n"
+            )
+        else:
+            keyboard = [
+                [KeyboardButton("manual"), KeyboardButton("direct")],
+            ]
+            update_text = (
+                f"Шаг 5/6: Выберите способ обновления:\n"
+                f"• <b>manual</b> — нет внешнего источника, обновления только через бота\n"
+                f"• <b>direct</b> — прямая ссылка на APK (укажите на следующем шаге)\n"
+            )
+
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
 
         await update.message.reply_text(
             f"✅ Категория: {category}\n\n"
-            f"Шаг 5/6: Выберите способ обновления:\n"
-            f"• <b>manual</b> — нет внешнего источника, обновления только через бота\n"
-            f"• <b>direct</b> — прямая ссылка на APK (укажите на следующем шаге)\n"
-            f"Для отмены напишите /cancel",
+            + update_text
+            + "Для отмены напишите /cancel",
             parse_mode="HTML",
             reply_markup=reply_markup
         )
@@ -1472,17 +1897,31 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data["addapp_data"] = data
         context.user_data["addapp_step"] = 5
 
-        keyboard = [
-            [KeyboardButton("manual"), KeyboardButton("direct")],
-        ]
+        if data.get("is_github_repo"):
+            keyboard = [
+                [KeyboardButton("manual"), KeyboardButton("github")],
+            ]
+            update_text = (
+                f"Шаг 5/6: Выберите способ обновления:\n"
+                f"• <b>manual</b> — скачать выбранную версию из GitHub и больше не обновлять\n"
+                f"• <b>github</b> — автопроверка GitHub Releases по latest\n"
+            )
+        else:
+            keyboard = [
+                [KeyboardButton("manual"), KeyboardButton("direct")],
+            ]
+            update_text = (
+                f"Шаг 5/6: Выберите способ обновления:\n"
+                f"• <b>manual</b> — нет внешнего источника, обновления только через бота\n"
+                f"• <b>direct</b> — прямая ссылка на APK (укажите на следующем шаге)\n"
+            )
+
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
 
         await update.message.reply_text(
             f"✅ Категория: {category}\n\n"
-            f"Шаг 5/6: Выберите способ обновления:\n"
-            f"• <b>manual</b> — нет внешнего источника, обновления только через бота\n"
-            f"• <b>direct</b> — прямая ссылка на APK (укажите на следующем шаге)\n"
-            f"Для отмены напишите /cancel",
+            + update_text
+            + "Для отмены напишите /cancel",
             parse_mode="HTML",
             reply_markup=reply_markup
         )
@@ -1491,6 +1930,63 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Шаг 5: Выбор метода обновления
     if step == 5:
         method = update.message.text.strip().lower()
+        if data.get("is_github_repo"):
+            if method not in ["manual", "github"]:
+                await update.message.reply_text("❌ Выберите manual или github.")
+                return
+
+            data["source_method"] = method
+            context.user_data["addapp_data"] = data
+
+            if method == "github":
+                await finalize_addapp_github(update, context, data)
+                return
+
+            releases = data.get("github_releases") or await fetch_github_releases(data.get("source_repo", ""), per_page=10)
+            if not releases:
+                await update.message.reply_text("❌ Не удалось получить релизы из GitHub. Проверьте ссылку и попробуйте снова.")
+                clear_flow_state(context)
+                await restore_menu(update, context)
+                return
+
+            latest_release = find_github_latest_release(releases)
+            if latest_release:
+                prereleases = [
+                    r for r in releases
+                    if r.get("prerelease") and not r.get("draft", False)
+                ]
+                version_list = [latest_release] + prereleases[:5] if prereleases else [latest_release]
+            else:
+                valid = [r for r in releases if not r.get("draft", False)]
+                version_list = sorted(
+                    valid,
+                    key=lambda r: parse_github_datetime(r.get("published_at") or r.get("created_at")),
+                    reverse=True,
+                )[:5]
+
+            if not version_list:
+                await update.message.reply_text("❌ Не найдено доступных релизов для загрузки.")
+                clear_flow_state(context)
+                await restore_menu(update, context)
+                return
+
+            context.user_data["addapp_versions"] = version_list
+            context.user_data["addapp_step"] = 6
+
+            text = "Выберите версию для загрузки:\n"
+            for idx, release in enumerate(version_list, start=1):
+                tag = release.get("tag_name", "unknown")
+                status = "pre-release" if release.get("prerelease") else "release"
+                text += f"{idx}. {tag} ({status})\n"
+
+            await update.message.reply_text(
+                "✅ Метод: manual\n\n"
+                + text
+                + "\nОтправьте номер версии из списка.",
+                reply_markup=ReplyKeyboardRemove()
+            )
+            return
+
         if method not in ["manual", "direct"]:
             await update.message.reply_text("❌ Выберите manual или direct.")
             return
@@ -1499,7 +1995,6 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data["addapp_data"] = data
 
         if method == "manual":
-            # Завершаем добавление
             await finalize_addapp(update, context, data)
         else:
             if data.get("temp_url"):
@@ -1522,8 +2017,30 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
                 )
         return
 
-    # Шаг 6: Ссылка для direct
+    # Шаг 6: Ссылка для direct или выбор GitHub релиза
     if step == 6:
+        if data.get("is_github_repo") and data.get("source_method") == "manual" and context.user_data.get("addapp_versions"):
+            choice = update.message.text.strip()
+            releases = context.user_data.get("addapp_versions", [])
+            selected_release = None
+
+            if choice.isdigit():
+                index = int(choice) - 1
+                if 0 <= index < len(releases):
+                    selected_release = releases[index]
+            else:
+                for release in releases:
+                    if release.get("tag_name", "").strip().lower() == choice.lower():
+                        selected_release = release
+                        break
+
+            if not selected_release:
+                await update.message.reply_text("❌ Неверный выбор. Отправьте номер версии из списка.")
+                return
+
+            await finalize_addapp_github_manual(update, context, data, selected_release)
+            return
+
         url = update.message.text.strip()
         if not (url.startswith("http://") or url.startswith("https://")):
             await update.message.reply_text("❌ Это не похоже на URL. Отправьте корректную ссылку.")
@@ -1536,12 +2053,177 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
 
+async def download_github_asset_to_file(url: str, target_path: str) -> None:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0), follow_redirects=True) as client:
+        async with client.stream("GET", url) as response:
+            response.raise_for_status()
+            with open(target_path, "wb") as f:
+                async for chunk in response.aiter_bytes():
+                    f.write(chunk)
+
+
+async def build_github_app_entries(
+    data: dict,
+    release: dict,
+    is_auto: bool,
+) -> list[dict]:
+    title_base = data["title"]
+    description = data.get("description", "")
+    category = data.get("category", "Uncategorized")
+    repo_url = data.get("source_update")
+    apps = []
+
+    assets = release.get("assets", [])
+    selected_assets = select_github_assets(assets)
+    if not selected_assets:
+        raise ValueError("В релизе GitHub не найдены APK assets.")
+
+    APKS_DIR.mkdir(parents=True, exist_ok=True)
+
+    for arch, asset in selected_assets:
+        if arch == "universal" and len(selected_assets) == 1:
+            filename = f"{title_base}.apk"
+            app_title = title_base
+        else:
+            filename = f"{title_base}_{arch}.apk"
+            app_title = filename[:-4]
+
+        temp_dir = tempfile.mkdtemp()
+        temp_apk_path = os.path.join(temp_dir, filename)
+        await download_github_asset_to_file(asset.get("browser_download_url"), temp_apk_path)
+
+        version = parse_version_from_apk(temp_apk_path)
+        build = parse_build_from_apk(temp_apk_path)
+        if version == "неизвестно":
+            version = release.get("tag_name", "unknown")
+
+        source_filter = make_arch_source_filter(arch, asset.get("name"))
+        app_entry = {
+            "title": app_title,
+            "description": description,
+            "url": f"http://{SERVER_DOMAIN}/apks/{filename}" if SERVER_DOMAIN else f"/apks/{filename}",
+            "sourceUpdate": repo_url if is_auto else None,
+            "sourceMethod": "github" if is_auto else "manual",
+            "sourceFilter": source_filter if is_auto else None,
+            "category": category,
+            "ver": version,
+            "build": build,
+            "lastUpdated": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+
+        target_path = APKS_DIR / filename
+        shutil.copy2(temp_apk_path, str(target_path))
+        os.chmod(target_path, 0o644)
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+        apps.append(app_entry)
+
+    return apps
+
+
+async def finalize_addapp_github(update: Update, context: ContextTypes.DEFAULT_TYPE, data: dict):
+    repo = data.get("source_repo")
+    if not repo:
+        await update.message.reply_text("❌ Не удалось определить GitHub репозиторий.")
+        clear_flow_state(context)
+        await restore_menu(update, context)
+        return
+
+    release = await fetch_github_release_latest(repo)
+    if not release:
+        releases = await fetch_github_releases(repo, per_page=10)
+        release = choose_github_auto_release(releases)
+
+    if not release:
+        await update.message.reply_text("❌ Не удалось получить релиз из GitHub.")
+        clear_flow_state(context)
+        await restore_menu(update, context)
+        return
+
+    try:
+        apps = await build_github_app_entries(data, release, is_auto=True)
+        apps_data = load_apps()
+        apps_data["apps"].extend(apps)
+        save_apps(apps_data)
+
+        clear_flow_state(context)
+
+        names = ", ".join([app["title"] for app in apps])
+        unique_versions = sorted({app.get("ver", "unknown") for app in apps})
+        version_text = unique_versions[0] if len(unique_versions) == 1 else ", ".join(unique_versions)
+        categories = sorted({app.get("category", "Uncategorized") for app in apps})
+        category = categories[0] if len(categories) == 1 else ", ".join(categories)
+        archs = [app["title"].split("_")[-1] if "_" in app["title"] else "universal" for app in apps]
+        source_update = data.get("source_update") or data.get("sourceUpdate") or "неизвестно"
+        await update.message.reply_text(
+            f"✅ Приложения <b>{names}</b> успешно добавлены и настроены на автообновление по GitHub Releases!\n"
+            f"📦 Версия: {version_text}\n"
+            f"🧩 Архитектуры: {', '.join(archs)}\n"
+            f"📁 Категория: {category}\n"
+            f"🔄 Метод обновлений: github\n"
+            f"🔗 sourceUpdate: {source_update}",
+            parse_mode="HTML",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        log(f"Добавлено приложение(я): {names} ver={version_text} archs={','.join(archs)} sourceMethod=github sourceUpdate={source_update}")
+        await restore_menu(update, context)
+    except Exception as e:
+        log(f"Error finalizing GitHub addapp: {e}")
+        await update.message.reply_text(f"❌ Ошибка при добавлении из GitHub: {e}")
+        clear_flow_state(context)
+        await restore_menu(update, context)
+
+
+async def finalize_addapp_github_manual(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    data: dict,
+    release: dict,
+):
+    try:
+        apps = await build_github_app_entries(data, release, is_auto=False)
+        apps_data = load_apps()
+        apps_data["apps"].extend(apps)
+        save_apps(apps_data)
+
+        clear_flow_state(context)
+
+        names = ", ".join([app["title"] for app in apps])
+        unique_versions = sorted({app.get("ver", "unknown") for app in apps})
+        version_text = unique_versions[0] if len(unique_versions) == 1 else ", ".join(unique_versions)
+        categories = sorted({app.get("category", "Uncategorized") for app in apps})
+        category = categories[0] if len(categories) == 1 else ", ".join(categories)
+        archs = [app["title"].split("_")[-1] if "_" in app["title"] else "universal" for app in apps]
+        method = "manual"
+        source_update = data.get("source_update") or data.get("sourceUpdate") or "неизвестно"
+        await update.message.reply_text(
+            f"✅ Приложения <b>{names}</b> успешно добавлены!\n"
+            f"📦 Версия: {version_text}\n"
+            f"🧩 Архитектуры: {', '.join(archs)}\n"
+            f"📁 Категория: {category}\n"
+            f"🔄 Метод обновлений: {method}\n"
+            f"🔗 sourceUpdate: {source_update}\n"
+            f"🔕 Автообновления отключены.",
+            parse_mode="HTML",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        log(f"Добавлено приложение(я): {names} ver={version_text} archs={','.join(archs)} sourceMethod=manual sourceUpdate={source_update}")
+        await restore_menu(update, context)
+    except Exception as e:
+        log(f"Error finalizing GitHub manual addapp: {e}")
+        await update.message.reply_text(f"❌ Ошибка при добавлении из GitHub: {e}")
+        clear_flow_state(context)
+        await restore_menu(update, context)
+
+
 async def finalize_addapp(update: Update, context: ContextTypes.DEFAULT_TYPE, data: dict):
     """Завершение добавления приложения."""
     try:
         title = data["title"]
         version = data["version"]
         temp_apk_path = data["temp_apk_path"]
+
+        build = data.get("build", "")
 
         # Формируем новую запись
         new_app = {
@@ -1552,6 +2234,7 @@ async def finalize_addapp(update: Update, context: ContextTypes.DEFAULT_TYPE, da
             "sourceMethod": data.get("source_method", "manual"),
             "category": data.get("category", "Uncategorized"),
             "ver": version,
+            "build": build,
             "lastUpdated": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         }
 
@@ -1568,11 +2251,12 @@ async def finalize_addapp(update: Update, context: ContextTypes.DEFAULT_TYPE, da
         # Очищаем временные данные
         temp_dir = os.path.dirname(temp_apk_path)
         shutil.rmtree(temp_dir, ignore_errors=True)
-        context.user_data.clear()
+        clear_flow_state(context)
 
+        version_display = format_version_display(version, build)
         await update.message.reply_text(
             f"✅ Приложение <b>{title}</b> успешно добавлено!\n\n"
-            f"📦 Версия: {version}\n"
+            f"📦 Версия: {version_display}\n"
             f"📁 Категория: {new_app['category']}\n"
             f"🔄 Метод обновлений: {new_app['sourceMethod']}",
             parse_mode="HTML",
@@ -1580,11 +2264,13 @@ async def finalize_addapp(update: Update, context: ContextTypes.DEFAULT_TYPE, da
         )
 
         log(f"Добавлено приложение: {title} v{version}")
+        await restore_menu(update, context)
 
     except Exception as e:
         log(f"Error finalizing addapp: {e}")
         await update.message.reply_text(f"❌ Ошибка при добавлении: {e}")
-        context.user_data.clear()
+        clear_flow_state(context)
+        await restore_menu(update, context)
 
 
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1599,26 +2285,30 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if "temp_file_path" in data:
             temp_dir = os.path.dirname(data["temp_file_path"])
             shutil.rmtree(temp_dir, ignore_errors=True)
-        context.user_data.clear()
+        clear_flow_state(context)
         await update.message.reply_text("❌ Загрузка файла отменена.", reply_markup=ReplyKeyboardRemove())
+        await restore_menu(update, context)
     elif "addapp_step" in context.user_data:
         # Очищаем временные файлы
         data = context.user_data.get("addapp_data", {})
         if "temp_apk_path" in data:
             temp_dir = os.path.dirname(data["temp_apk_path"])
             shutil.rmtree(temp_dir, ignore_errors=True)
-        context.user_data.clear()
+        clear_flow_state(context)
         await update.message.reply_text("❌ Операция отменена.", reply_markup=ReplyKeyboardRemove())
+        await restore_menu(update, context)
     elif "removeapp_step" in context.user_data:
-        context.user_data.clear()
+        clear_flow_state(context)
         await update.message.reply_text("❌ Операция отменена.", reply_markup=ReplyKeyboardRemove())
+        await restore_menu(update, context)
     elif "updateapp_step" in context.user_data:
         data = context.user_data.get("updateapp_data", {})
         if "temp_apk_path" in data:
             temp_dir = os.path.dirname(data["temp_apk_path"])
             shutil.rmtree(temp_dir, ignore_errors=True)
-        context.user_data.clear()
+        clear_flow_state(context)
         await update.message.reply_text("❌ Операция отменена.", reply_markup=ReplyKeyboardRemove())
+        await restore_menu(update, context)
     else:
         await update.message.reply_text("Нет активной операции для отмены.")
 
@@ -1664,6 +2354,7 @@ async def removeapp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup
         )
 
+        context.user_data["return_menu"] = context.user_data.get("current_menu", "main")
         context.user_data["removeapp_step"] = 1
 
     except Exception as e:
@@ -1686,11 +2377,12 @@ async def removeapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
     # Шаг 1: Выбор приложения
     if step == 1:
         if text == "❌ Отмена":
-            context.user_data.clear()
+            clear_flow_state(context)
             await update.message.reply_text(
                 "❌ Операция отменена.",
                 reply_markup=ReplyKeyboardRemove()
             )
+            await restore_menu(update, context)
             return
 
         try:
@@ -1733,17 +2425,19 @@ async def removeapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
         except Exception as e:
             log(f"Error finding app: {e}")
             await update.message.reply_text(f"❌ Ошибка: {e}")
-            context.user_data.clear()
+            clear_flow_state(context)
+            await restore_menu(update, context)
             return
 
     # Шаг 2: Подтверждение удаления
     if step == 2:
         if text == "❌ Отмена":
-            context.user_data.clear()
+            clear_flow_state(context)
             await update.message.reply_text(
                 "❌ Удаление отменено.",
                 reply_markup=ReplyKeyboardRemove()
             )
+            await restore_menu(update, context)
             return
 
         if text != "✅ Удалить":
@@ -1754,7 +2448,8 @@ async def removeapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
             app_idx = context.user_data.get("removeapp_app_idx")
             if app_idx is None:
                 await update.message.reply_text("❌ Ошибка: приложение не выбрано.")
-                context.user_data.clear()
+                clear_flow_state(context)
+                await restore_menu(update, context)
                 return
 
             data = load_apps()
@@ -1762,7 +2457,8 @@ async def removeapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
 
             if app_idx >= len(apps):
                 await update.message.reply_text("❌ Ошибка: приложение не найдено.")
-                context.user_data.clear()
+                clear_flow_state(context)
+                await restore_menu(update, context)
                 return
 
             app = apps[app_idx]
@@ -1779,7 +2475,7 @@ async def removeapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
             apps.pop(app_idx)
             save_apps(data)
 
-            context.user_data.clear()
+            clear_flow_state(context)
 
             await update.message.reply_text(
                 f"✅ Приложение <b>{title}</b> успешно удалено!",
@@ -1788,11 +2484,13 @@ async def removeapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
             )
 
             log(f"Удалено приложение: {title}")
+            await restore_menu(update, context)
 
         except Exception as e:
             log(f"Error removing app: {e}")
             await update.message.reply_text(f"❌ Ошибка при удалении: {e}")
-            context.user_data.clear()
+            clear_flow_state(context)
+            await restore_menu(update, context)
             return
 
 
@@ -1838,6 +2536,7 @@ async def updateapp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup
         )
 
+        context.user_data["return_menu"] = context.user_data.get("current_menu", "main")
         context.user_data["updateapp_step"] = 1
         context.user_data["updateapp_data"] = {}
 
@@ -1893,8 +2592,11 @@ async def updateapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
                                 f.write(chunk)
 
                 version = parse_version_from_apk(temp_apk_path)
+                build = parse_build_from_apk(temp_apk_path)
+                version_display = format_version_display(version, build)
                 data["temp_apk_path"] = temp_apk_path
                 data["version"] = version
+                data["build"] = build
                 data["file_name"] = file_name
 
                 context.user_data["updateapp_data"] = data
@@ -1904,7 +2606,7 @@ async def updateapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
 
                 if len(matches) == 1:
                     app_idx = matches[0]
-                    await process_updateapp_file(update, context, app_idx, temp_apk_path, version)
+                    await process_updateapp_file(update, context, app_idx, temp_apk_path, version, build)
                 elif len(matches) > 1:
                     # Несколько совпадений - показываем выбор
                     keyboard = []
@@ -1916,7 +2618,7 @@ async def updateapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
 
                     await update.message.reply_text(
                         f"📁 Файл: {file_name}\n"
-                        f"📦 Версия: {version}\n\n"
+                        f"📦 Версия: {version_display}\n\n"
                         f"🔍 Найдено совпадений: {len(matches)}\n"
                         "Выберите приложение для обновления:",
                         reply_markup=reply_markup
@@ -1940,7 +2642,7 @@ async def updateapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
 
                     await update.message.reply_text(
                         f"📁 Файл: {file_name}\n"
-                        f"📦 Версия: {version}\n\n"
+                        f"📦 Версия: {version_display}\n\n"
                         "⚠️ Не найдено совпадений в списке приложений.\n"
                         "Выберите приложение для обновления:",
                         reply_markup=reply_markup
@@ -1954,11 +2656,11 @@ async def updateapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
                 log(f"Error downloading file from Telegram: {e}")
                 await update.message.reply_text(f"❌ Ошибка загрузки файла: {e}")
                 shutil.rmtree(temp_dir, ignore_errors=True)
-                context.user_data.clear()
+                clear_flow_state(context)
+                await restore_menu(update, context)
                 return
 
-        # Проверяем, есть ли текст (ссылка или выбор приложения)
-        if update.message.text:
+            # Если это название приложения
             text = update.message.text.strip()
 
             if text == "❌ Отмена":
@@ -1966,11 +2668,12 @@ async def updateapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
                 if "temp_apk_path" in data:
                     temp_dir = os.path.dirname(data["temp_apk_path"])
                     shutil.rmtree(temp_dir, ignore_errors=True)
-                context.user_data.clear()
+                clear_flow_state(context)
                 await update.message.reply_text(
                     "❌ Операция отменена.",
                     reply_markup=ReplyKeyboardRemove()
                 )
+                await restore_menu(update, context)
                 return
 
             # Если это ссылка
@@ -1997,7 +2700,7 @@ async def updateapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
 
                     if len(matches) == 1:
                         app_idx = matches[0]
-                        await process_updateapp_file(update, context, app_idx, temp_apk_path, version)
+                        await process_updateapp_file(update, context, app_idx, temp_apk_path, version, build)
                     elif len(matches) > 1:
                         keyboard = []
                         for i in matches:
@@ -2045,7 +2748,8 @@ async def updateapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
                     log(f"Error downloading file from URL: {e}")
                     await update.message.reply_text(f"❌ Ошибка скачивания файла: {e}")
                     shutil.rmtree(temp_dir, ignore_errors=True)
-                    context.user_data.clear()
+                    clear_flow_state(context)
+                    await restore_menu(update, context)
                     return
 
             # Если это название приложения
@@ -2064,7 +2768,7 @@ async def updateapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
 
                 await update.message.reply_text(
                     f"✅ Выбрано: <b>{selected_app.get('title', 'Unknown')}</b>\n\n"
-                    f"📦 Текущая версия: {get_installed_version(selected_app)}\n\n"
+                    f"📦 Текущая версия: {get_installed_version_display(selected_app)}\n\n"
                     f"Отправьте APK файл или ссылку для обновления.\n"
                     f"Для отмены напишите /cancel",
                     parse_mode="HTML",
@@ -2089,11 +2793,12 @@ async def updateapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
             if "temp_apk_path" in data:
                 temp_dir = os.path.dirname(data["temp_apk_path"])
                 shutil.rmtree(temp_dir, ignore_errors=True)
-            context.user_data.clear()
+            clear_flow_state(context)
             await update.message.reply_text(
                 "❌ Операция отменена.",
                 reply_markup=ReplyKeyboardRemove()
             )
+            await restore_menu(update, context)
             return
 
         apps_list = load_apps().get("apps", [])
@@ -2108,7 +2813,8 @@ async def updateapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
         if selected_app:
             temp_apk_path = data.get("temp_apk_path")
             version = data.get("version", "неизвестно")
-            await process_updateapp_file(update, context, app_idx, temp_apk_path, version)
+            build = data.get("build", "")
+            await process_updateapp_file(update, context, app_idx, temp_apk_path, version, build)
         else:
             await update.message.reply_text("❌ Приложение не найдено. Выберите из списка.")
             return
@@ -2147,15 +2853,17 @@ async def updateapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
                                 f.write(chunk)
 
                 version = parse_version_from_apk(temp_apk_path)
+                build = parse_build_from_apk(temp_apk_path)
                 app_idx = context.user_data.get("updateapp_app_idx")
-                await process_updateapp_file(update, context, app_idx, temp_apk_path, version)
+                await process_updateapp_file(update, context, app_idx, temp_apk_path, version, build)
                 return
 
             except Exception as e:
                 log(f"Error downloading file: {e}")
                 await update.message.reply_text(f"❌ Ошибка загрузки файла: {e}")
                 shutil.rmtree(temp_dir, ignore_errors=True)
-                context.user_data.clear()
+                clear_flow_state(context)
+                await restore_menu(update, context)
                 return
 
         # Проверяем ссылку
@@ -2169,15 +2877,17 @@ async def updateapp_handle_input(update: Update, context: ContextTypes.DEFAULT_T
                     temp_apk_path, filename = await download_apk_from_url(text, temp_dir)
 
                     version = parse_version_from_apk(temp_apk_path)
+                    build = parse_build_from_apk(temp_apk_path)
                     app_idx = context.user_data.get("updateapp_app_idx")
-                    await process_updateapp_file(update, context, app_idx, temp_apk_path, version)
+                    await process_updateapp_file(update, context, app_idx, temp_apk_path, version, build)
                     return
 
                 except Exception as e:
                     log(f"Error downloading file from URL: {e}")
                     await update.message.reply_text(f"❌ Ошибка скачивания файла: {e}")
                     shutil.rmtree(temp_dir, ignore_errors=True)
-                    context.user_data.clear()
+                    clear_flow_state(context)
+                    await restore_menu(update, context)
                     return
 
             await update.message.reply_text("❌ Отправьте APK файл или прямую ссылку на него.")
@@ -2190,6 +2900,7 @@ async def process_updateapp_file(
     app_idx: int,
     temp_apk_path: str,
     new_version: str,
+    new_build: str,
 ):
     """Обработка файла для обновления приложения."""
     try:
@@ -2203,24 +2914,27 @@ async def process_updateapp_file(
         app = apps[app_idx]
         title = app.get("title", "Unknown")
         old_version = get_installed_version(app)
+        old_build = get_installed_build(app)
+        old_version_display = format_version_display(old_version, old_build)
+        new_version_display = format_version_display(new_version, new_build)
 
         log(f"Обновление приложения: {title}")
-        log(f"  Старая версия: {old_version}")
-        log(f"  Новая версия: {new_version}")
+        log(f"  Старая версия: {old_version_display}")
+        log(f"  Новая версия: {new_version_display}")
 
-        cmp_result = compare_versions(new_version, old_version)
+        cmp_result = compare_versions_with_build(new_version, new_build, old_version, old_build)
 
         if cmp_result <= 0:
             if cmp_result == 0:
                 msg = (
                     f"📦 {title}\n"
-                    f"Версии совпадают: {old_version}\n\n"
+                    f"Версии совпадают: {old_version_display}\n\n"
                     "Перезаписать файл?"
                 )
             else:
                 msg = (
                     f"📦 {title}\n"
-                    f"⚠️ Новая версия ({new_version}) < старой ({old_version})\n\n"
+                    f"⚠️ Новая версия ({new_version_display}) < старой ({old_version_display})\n\n"
                     "Продолжить?"
                 )
 
@@ -2233,7 +2947,9 @@ async def process_updateapp_file(
             context.user_data["updateapp_app_idx"] = app_idx
             context.user_data["updateapp_temp_apk_path"] = temp_apk_path
             context.user_data["updateapp_new_version"] = new_version
+            context.user_data["updateapp_new_build"] = new_build
             context.user_data["updateapp_old_version"] = old_version
+            context.user_data["updateapp_old_build"] = old_build
             context.user_data["updateapp_step"] = 3
 
             await update.message.reply_text(msg, reply_markup=reply_markup)
@@ -2241,13 +2957,14 @@ async def process_updateapp_file(
 
         # Версия новее - обновляем сразу
         await do_updateapp(
-            update, context, app_idx, temp_apk_path, new_version, old_version
+            update, context, app_idx, temp_apk_path, new_version, new_build, old_version, old_build
         )
 
     except Exception as e:
         log(f"Error in process_updateapp_file: {e}")
         await update.message.reply_text(f"❌ Ошибка: {e}")
-        context.user_data.clear()
+        clear_flow_state(context)
+        await restore_menu(update, context)
 
 
 async def updateapp_confirm_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2266,25 +2983,29 @@ async def updateapp_confirm_handle(update: Update, context: ContextTypes.DEFAULT
         if temp_apk_path:
             temp_dir = os.path.dirname(temp_apk_path)
             shutil.rmtree(temp_dir, ignore_errors=True)
-        context.user_data.clear()
+        clear_flow_state(context)
         await update.message.reply_text(
             "❌ Обновление отменено.",
             reply_markup=ReplyKeyboardRemove()
         )
+        await restore_menu(update, context)
         return
 
     if text == "✅ Да":
         app_idx = context.user_data.get("updateapp_app_idx")
         temp_apk_path = context.user_data.get("updateapp_temp_apk_path")
         new_version = context.user_data.get("updateapp_new_version")
+        new_build = context.user_data.get("updateapp_new_build", "")
         old_version = context.user_data.get("updateapp_old_version")
+        old_build = context.user_data.get("updateapp_old_build", "")
 
         if not all([app_idx is not None, temp_apk_path, new_version]):
             await update.message.reply_text("❌ Ошибка: данные не найдены.")
-            context.user_data.clear()
+            clear_flow_state(context)
+            await restore_menu(update, context)
             return
 
-        await do_updateapp(update, context, app_idx, temp_apk_path, new_version, old_version)
+        await do_updateapp(update, context, app_idx, temp_apk_path, new_version, new_build, old_version, old_build)
         return
 
 
@@ -2294,7 +3015,9 @@ async def do_updateapp(
     app_idx: int,
     temp_apk_path: str,
     new_version: str,
+    new_build: str,
     old_version: str,
+    old_build: str,
 ):
     """Выполнить обновление приложения."""
     try:
@@ -2313,28 +3036,33 @@ async def do_updateapp(
 
         timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         data["apps"][app_idx]["ver"] = new_version
+        data["apps"][app_idx]["build"] = new_build
         data["apps"][app_idx]["lastUpdated"] = timestamp
         save_apps(data)
 
-        log(f"Обновлено: {title} {old_version} -> {new_version}")
+        old_version_display = format_version_display(old_version, old_build)
+        new_version_display = format_version_display(new_version, new_build)
+        log(f"Обновлено: {title} {old_version_display} -> {new_version_display}")
 
         temp_dir = os.path.dirname(temp_apk_path)
         shutil.rmtree(temp_dir, ignore_errors=True)
-        context.user_data.clear()
+        clear_flow_state(context)
 
         await update.message.reply_text(
             f"✅ <b>{title}</b> обновлён!\n"
-            f"Версия: {old_version} → {new_version}",
+            f"Версия: {old_version_display} → {new_version_display}",
             parse_mode="HTML",
             reply_markup=ReplyKeyboardRemove()
         )
 
-        await send_telegram(f"🔄 Обновлено: {title}\nВерсия: {old_version} → {new_version}")
+        await send_telegram(f"🔄 Обновлено: {title}\nВерсия: {old_version_display} → {new_version_display}")
+        await restore_menu(update, context)
 
     except Exception as e:
         log(f"Error during updateapp: {e}")
         await update.message.reply_text(f"❌ Ошибка обновления: {e}")
-        context.user_data.clear()
+        clear_flow_state(context)
+        await restore_menu(update, context)
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2534,7 +3262,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if "temp_apk_path" in context.user_data:
             temp_dir = os.path.dirname(context.user_data["temp_apk_path"])
             shutil.rmtree(temp_dir, ignore_errors=True)
-            context.user_data.clear()
+        clear_flow_state(context)
+        await restore_menu(update, context)
         return
 
     if data.startswith("select_"):
@@ -2565,8 +3294,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         apps = data_apps.get("apps", [])
         app = apps[app_idx] if app_idx < len(apps) else {}
         old_version = get_installed_version(app) if app else "?"
+        old_build = get_installed_build(app) if app else ""
+        new_build = parse_build_from_apk(temp_apk_path)
 
-        await do_update(update, context, app_idx, temp_apk_path, file_name, new_version, old_version)
+        await do_update(update, context, app_idx, temp_apk_path, file_name, new_version, new_build, old_version, old_build)
 
 
 async def process_update(
@@ -2587,28 +3318,32 @@ async def process_update(
 
     app = apps[app_idx]
     old_version = get_installed_version(app)
+    old_build = get_installed_build(app)
+    new_build = parse_build_from_apk(temp_apk_path)
+    old_version_display = format_version_display(old_version, old_build)
+    new_version_display = format_version_display(new_version, new_build)
     title = app.get("title", "Unknown")
 
     log(f"Обработка обновления: {title}")
-    log(f"  Старая версия: {old_version}")
-    log(f"  Новая версия: {new_version}")
-    
-    cmp_result = compare_versions(new_version, old_version)
-    
+    log(f"  Старая версия: {old_version_display}")
+    log(f"  Новая версия: {new_version_display}")
+
+    cmp_result = compare_versions_with_build(new_version, new_build, old_version, old_build)
+
     if cmp_result <= 0:
         if cmp_result == 0:
             msg = (
                 f"📦 {title}\n"
-                f"Версии совпадают: {old_version}\n\n"
+                f"Версии совпадают: {old_version_display}\n\n"
                 "Перезаписать файл?"
             )
         else:
             msg = (
                 f"📦 {title}\n"
-                f"⚠️ Новая версия ({new_version}) < старой ({old_version})\n\n"
+                f"⚠️ Новая версия ({new_version_display}) < старой ({old_version_display})\n\n"
                 "Продолжить?"
             )
-        
+
         keyboard = [
             [
                 InlineKeyboardButton("✅ Да", callback_data=f"confirm_{app_idx}"),
@@ -2616,19 +3351,22 @@ async def process_update(
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
+
         context.user_data["confirm_app_idx"] = app_idx
         context.user_data["temp_apk_path"] = temp_apk_path
         context.user_data["file_name"] = file_name
         context.user_data["new_version"] = new_version
-        
+        context.user_data["new_build"] = new_build
+        context.user_data["old_version"] = old_version
+        context.user_data["old_build"] = old_build
+
         if update.callback_query:
             await update.callback_query.edit_message_text(msg, reply_markup=reply_markup)
         else:
             await update.message.reply_text(msg, reply_markup=reply_markup)
         return
-    
-    await do_update(update, context, app_idx, temp_apk_path, file_name, new_version, old_version)
+
+    await do_update(update, context, app_idx, temp_apk_path, file_name, new_version, new_build, old_version, old_build)
 
 
 async def do_update(
@@ -2638,7 +3376,9 @@ async def do_update(
     temp_apk_path: str,
     file_name: str,
     new_version: str,
+    new_build: str,
     old_version: str,
+    old_build: str,
 ):
     """Выполнить обновление приложения."""
     data = load_apps()
@@ -2657,30 +3397,34 @@ async def do_update(
         
         timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         data["apps"][app_idx]["ver"] = new_version
+        data["apps"][app_idx]["build"] = new_build
         data["apps"][app_idx]["lastUpdated"] = timestamp
         save_apps(data)
         
-        log(f"Обновлено: {title} {old_version} -> {new_version}")
+        old_version_display = format_version_display(old_version, old_build)
+        new_version_display = format_version_display(new_version, new_build)
+        log(f"Обновлено: {title} {old_version_display} -> {new_version_display}")
         
         temp_dir = os.path.dirname(temp_apk_path)
         shutil.rmtree(temp_dir, ignore_errors=True)
-        context.user_data.clear()
+        clear_flow_state(context)
         
         msg = (
             f"🔄 Обновлено: <b>{title}</b>\n"
-            f"Версия: {old_version} → {new_version}\n"
+            f"Версия: {old_version_display} → {new_version_display}\n"
             f"Дата: {timestamp}"
         )
         
         if update.callback_query:
             await update.callback_query.edit_message_text(
-                f"✅ <b>{title}</b> обновлён!\n{old_version} → {new_version}",
+                f"✅ <b>{title}</b> обновлён!\n{old_version_display} → {new_version_display}",
                 parse_mode="HTML",
             )
         else:
             await update.message.reply_text(msg, parse_mode="HTML")
         
-        await send_telegram(f"🔄 Обновлено: {title}\nВерсия: {old_version} → {new_version}")
+        await send_telegram(f"🔄 Обновлено: {title}\nВерсия: {old_version_display} → {new_version_display}")
+        await restore_menu(update, context)
         
     except Exception as e:
         log(f"Error during update: {e}")
@@ -2688,6 +3432,8 @@ async def do_update(
             await update.callback_query.edit_message_text(f"❌ Ошибка обновления: {e}")
         else:
             await update.message.reply_text(f"❌ Ошибка обновления: {e}")
+        clear_flow_state(context)
+        await restore_menu(update, context)
 
 
 # =============================================================================
@@ -2702,7 +3448,7 @@ bot_application = None
 scheduler = None
 
 
-def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Универсальный обработчик текстовых сообщений.
     Маршрутизирует ввод в соответствующий мастер в зависимости от активного шага.
@@ -2713,15 +3459,45 @@ def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Проверяем активные шаги и вызываем соответствующий обработчик
     if "upload_step" in context.user_data:
-        return upload_handle_input(update, context)
+        return await upload_handle_input(update, context)
     elif "addapp_step" in context.user_data:
-        return addapp_handle_input(update, context)
+        return await addapp_handle_input(update, context)
     elif "removeapp_step" in context.user_data:
-        return removeapp_handle_input(update, context)
+        return await removeapp_handle_input(update, context)
     elif "updateapp_step" in context.user_data or context.user_data.get("updateapp_confirm"):
         if context.user_data.get("updateapp_confirm"):
-            return updateapp_confirm_handle(update, context)
-        return updateapp_handle_input(update, context)
+            return await updateapp_confirm_handle(update, context)
+        return await updateapp_handle_input(update, context)
+
+    text = update.message.text.strip()
+
+    if text == "📱 Приложения":
+        return await apps_menu_command(update, context)
+    if text == "📁 Файлы":
+        return await files_menu_command(update, context)
+    if text == "📊 Статус":
+        return await status_command(update, context)
+
+    if text == "📋 Список приложений":
+        return await apps_command(update, context)
+    if text == "🔄 Проверить все":
+        return await updateall_command(update, context)
+    if text == "⚙️ Обновить приложение":
+        return await updateapp_command(update, context)
+    if text == "➕ Добавить приложение":
+        return await addapp_command(update, context)
+    if text == "🗑️ Удалить приложение":
+        return await removeapp_command(update, context)
+
+    if text == "📂 Список файлов":
+        return await files_command(update, context)
+    if text == "⬆️ Загрузить файл":
+        return await upload_command(update, context)
+    if text == "🗑️ Удалить файл":
+        return await delfile_command(update, context)
+
+    if text == "⬅️ Назад":
+        return await start_command(update, context)
 
     # Если нет активного мастера — игнорируем текст (чтобы не спамить ошибками)
 
@@ -2741,12 +3517,14 @@ async def run_bot():
 
         bot_application.add_handler(CommandHandler("start", start_command))
         bot_application.add_handler(CommandHandler("apps", apps_command))
+        bot_application.add_handler(CommandHandler("apps_menu", apps_menu_command))
         bot_application.add_handler(CommandHandler("status", status_command))
         bot_application.add_handler(CommandHandler("updateall", updateall_command))
         bot_application.add_handler(CommandHandler("addapp", addapp_command))
         bot_application.add_handler(CommandHandler("removeapp", removeapp_command))
         bot_application.add_handler(CommandHandler("updateapp", updateapp_command))
         bot_application.add_handler(CommandHandler("files", files_command))
+        bot_application.add_handler(CommandHandler("files_menu", files_menu_command))
         bot_application.add_handler(CommandHandler("upload", upload_command))
         bot_application.add_handler(CommandHandler("delfile", delfile_command))
         bot_application.add_handler(CommandHandler("cancel", cancel_command))
