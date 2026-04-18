@@ -28,12 +28,14 @@ pip install -r requirements.txt
 ### Configuration
 
 1. Copy `.env.example` to `.env`:
+
 ```bash
 cp .env.example .env
 nano .env
 ```
 
 2. Edit `config/apps.json`:
+
 ```json
 {
   "apps": [
@@ -85,30 +87,30 @@ tinstaller/
 
 ## API Endpoints
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /` | List all applications |
-| `GET /apks/<filename>` | Download APK file |
-| `GET /health` | Health check |
-| `POST /update` | Manual update trigger (requires `X-Auth-Token`) |
+| Endpoint               | Description                                     |
+| ---------------------- | ----------------------------------------------- |
+| `GET /`                | List all applications                           |
+| `GET /apks/<filename>` | Download APK file                               |
+| `GET /health`          | Health check                                    |
+| `POST /update`         | Manual update trigger (requires `X-Auth-Token`) |
 
 ## Telegram Bot Commands
 
-| Command | Description |
-|---------|-------------|
-| `/start` | Start the bot |
-| `/apps` | List all applications |
-| `/status` | Server status (CPU, RAM, disk) |
-| `/update` | Trigger update check |
+| Command        | Description                        |
+| -------------- | ---------------------------------- |
+| `/start`       | Start the bot                      |
+| `/apps`        | List all applications              |
+| `/status`      | Server status (CPU, RAM, disk)     |
+| `/update`      | Trigger update check               |
 | `/forceupdate` | Force update from external sources |
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token from @BotFather |
-| `TELEGRAM_CHAT_ID` | Chat ID for notifications |
-| `ADMIN_ID` | Admin user ID (only admin can upload) |
+| Variable                      | Description                                 |
+| ----------------------------- | ------------------------------------------- |
+| `TELEGRAM_BOT_TOKEN`          | Telegram bot token from @BotFather          |
+| `TELEGRAM_CHAT_ID`            | Chat ID for notifications                   |
+| `ADMIN_ID`                    | Admin user ID (only admin can upload)       |
 | `UPDATE_CHECK_INTERVAL_HOURS` | Update check interval in hours (default: 6) |
 
 ## systemd Service
@@ -120,6 +122,17 @@ sudo cp service/tinstaller.service.example /etc/systemd/system/tinstaller.servic
 sudo systemctl daemon-reload
 sudo systemctl enable tinstaller
 sudo systemctl start tinstaller
+```
+
+### Logging
+
+TInstaller writes logs to `logs/server.log`, and if you run it manually with output redirected, to `logs/server.out`.
+
+To rotate `server.log`, `server.out` and `update.log`, install the provided logrotate configuration:
+
+```bash
+sudo cp service/tinstaller.logrotate.conf /etc/logrotate.d/tinstaller
+sudo logrotate -f /etc/logrotate.d/tinstaller
 ```
 
 ### Manage
@@ -138,7 +151,9 @@ sudo systemctl restart tinstaller
 ## Update Methods
 
 ### 1. direct - Direct APK URL
+
 Direct URLs may include redirects; the bot now follows them and downloads the final APK file.
+
 ```json
 {
   "sourceUpdate": "http://example.com/apps/Aerial_Dream.apk",
@@ -146,7 +161,22 @@ Direct URLs may include redirects; the bot now follows them and downloads the fi
 }
 ```
 
-### 2. github_release - GitHub Releases API
+### 2. github - GitHub Releases repository source
+
+```json
+{
+  "sourceUpdate": "https://github.com/owner/repo",
+  "sourceMethod": "github",
+  "sourceFilter": "universal"
+}
+```
+
+- Автоматически используется `releases/latest`.
+- Если `latest` отсутствует, бот выбирает самый свежий доступный релиз по дате публикации.
+- Если найден `universal`, он выбирается; иначе используются `v7a` и `v8a`.
+
+### 3. github_release - GitHub Releases API
+
 ```json
 {
   "sourceUpdate": "https://api.github.com/repos/owner/repo/releases/latest",
@@ -155,7 +185,8 @@ Direct URLs may include redirects; the bot now follows them and downloads the fi
 }
 ```
 
-### 3. gitlab_release - GitLab Releases API
+### 4. gitlab_release - GitLab Releases API
+
 ```json
 {
   "sourceUpdate": "https://gitlab.com/api/v4/projects/ID/releases",
@@ -165,6 +196,7 @@ Direct URLs may include redirects; the bot now follows them and downloads the fi
 ```
 
 ### 4. custom - Custom Command
+
 ```json
 {
   "sourceUpdate": "curl -s https://api.example.com/releases | jq -r '.download_url'",

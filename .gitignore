@@ -38,7 +38,7 @@ env/
 .env.*.local
 
 # Logs
-logs/*.log
+logs/
 !logs/.gitkeep
 
 # OS
