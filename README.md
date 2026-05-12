@@ -292,8 +292,8 @@ sudo systemctl restart tinstaller
       "title": "Название",
       "description": "Описание",
       "url": "https://YOUR_DOMAIN/apks/File.apk",
-      "sourceUpdate": "https://external.com/app.apk или API URL",
-      "sourceMethod": "direct|github|github_release|gitlab_release|custom",
+      "sourceUpdate": "https://external.com/app.apk или URL страницы с APK",
+      "sourceMethod": "direct|site|github|github_release|gitlab_release|custom",
       "sourceFilter": "паттерн для фильтрации (опционально)",
       "category": "Категория",
       "ver": "1.2.3",
@@ -326,7 +326,18 @@ sudo systemctl restart tinstaller
 }
 ```
 
-2. **github** - GitHub Releases repository source:
+3. **site** - Сайт со страницей приложения, откуда выбирается последняя APK по имени файла:
+
+```json
+{
+  "title": "NUM",
+  "sourceUpdate": "https://www.tvbox.one/apps/num-no-ui-movies.html",
+  "sourceMethod": "site",
+  "sourceFilter": "NoUI-Movies.*\\.apk"
+}
+```
+
+4. **github** - GitHub Releases repository source:
 
 ```json
 {

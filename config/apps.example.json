@@ -10,6 +10,17 @@
       "category": "Utilities",
       "ver": "1.0.0",
       "lastUpdated": "2026-02-27T00:00:00Z"
+    },
+    {
+      "title": "Example Site App",
+      "description": "Пример сайта, откуда берётся последняя APK.",
+      "url": "https://YOUR_DOMAIN/apks/ExampleSiteApp.apk",
+      "sourceUpdate": "https://example.com/app-page.html",
+      "sourceMethod": "site",
+      "sourceFilter": "ExampleSiteApp.*\\.apk",
+      "category": "Utilities",
+      "ver": "1.0.0",
+      "lastUpdated": "2026-02-27T00:00:00Z"
     }
   ]
 }

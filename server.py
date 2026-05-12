@@ -4,6 +4,8 @@
 """
 
 import os
+import sys
+import fcntl
 import logging
 from logging.handlers import RotatingFileHandler
 import re
@@ -15,6 +17,8 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 import asyncio
+from html.parser import HTMLParser
+from urllib.parse import urljoin, urlparse
 
 from dotenv import load_dotenv
 
@@ -48,6 +52,8 @@ FILES_CONFIG_PATH = BASE_DIR / "config" / "files.json"
 APKS_DIR = BASE_DIR / "apks"
 FILES_DIR = BASE_DIR / "files"
 LOG_FILE = BASE_DIR / "logs" / "server.log"
+LOCKFILE_PATH = BASE_DIR / ".tinstaller.lock"
+lock_file = None
 
 # Настройка ротации логов
 logger = logging.getLogger("tinstaller")
@@ -72,6 +78,25 @@ RETRY_DOWNLOAD_DELAY = int(os.environ.get("RETRY_DOWNLOAD_DELAY", "5"))
 # =============================================================================
 # ЛОГИРОВАНИЕ
 # =============================================================================
+
+def acquire_single_instance_lock() -> bool:
+    global lock_file
+
+    try:
+        LOCKFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        lock_file = open(LOCKFILE_PATH, "a+")
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_file.seek(0)
+        lock_file.truncate()
+        lock_file.write(str(os.getpid()))
+        lock_file.flush()
+        return True
+    except BlockingIOError:
+        return False
+    except Exception as e:
+        print(f"[LOG][{os.getpid()}] Error acquiring lock: {e}")
+        return False
+
 
 def log(message: str, level: str = "info"):
     """Логирование в файл и консоль с ротацией."""
@@ -199,6 +224,58 @@ def compare_builds(b1: str, b2: str) -> int:
         return 1 if int(b1) > int(b2) else -1
 
     return 1 if b1 > b2 else -1 if b1 < b2 else 0
+
+
+def extract_version_from_filename(filename: str) -> str:
+    if not filename:
+        return ""
+
+    match = re.search(r"(\d+(?:\.\d+)+)", filename)
+    return match.group(1) if match else ""
+
+
+class ApkLinkParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.hrefs = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() != "a":
+            return
+        for name, value in attrs:
+            if name.lower() == "href" and value:
+                self.hrefs.append(value)
+
+
+def find_latest_apk_url_from_html(html: str, base_url: str, source_filter: str = "") -> str | None:
+    parser = ApkLinkParser()
+    parser.feed(html)
+    candidates = []
+
+    for href in parser.hrefs:
+        if not href.lower().endswith(".apk"):
+            continue
+        if href.lower().startswith(("javascript:", "mailto:")):
+            continue
+
+        full_url = urljoin(base_url, href)
+        if not full_url.startswith(("http://", "https://")):
+            continue
+
+        if source_filter:
+            if not re.search(source_filter, href, re.I) and not re.search(source_filter, full_url, re.I):
+                continue
+
+        filename = Path(urlparse(full_url).path).name
+        version = extract_version_from_filename(filename)
+        version_key = parse_version(version) if version else (0,)
+        candidates.append((version_key, full_url))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return candidates[0][1]
 
 
 def compare_versions_with_build(v1: str, b1: str, v2: str, b2: str) -> int:
@@ -565,6 +642,26 @@ async def get_download_url(app: dict) -> str | None:
             return None
         except Exception as e:
             log(f"ERROR: GitLab API error: {e}")
+            return None
+    
+    elif source_method == "site":
+        if not source_update:
+            log(f"ERROR: sourceUpdate обязателен для site")
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+                response = await client.get(source_update)
+                response.raise_for_status()
+                html = response.text
+
+            url = find_latest_apk_url_from_html(html, source_update, source_filter)
+            if not url:
+                log(f"ERROR: Не удалось найти APK на странице {source_update}")
+                return None
+
+            return url
+        except Exception as e:
+            log(f"ERROR: Site source error: {e}")
             return None
     
     elif source_method == "custom":
@@ -1723,14 +1820,36 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
                 return
 
             data["temp_url"] = url
+            data["source_method"] = "site" if not Path(urlparse(url).path).suffix.lower() == ".apk" else "direct"
             context.user_data["addapp_data"] = data
-            context.user_data["addapp_step"] = 1.5  # Промежуточный шаг для скачивания
 
-            await update.message.reply_text("⏳ Скачивание файла по ссылке...")
+            await update.message.reply_text("⏳ Проверка ссылки и поиск APK..." if data["source_method"] == "site" else "⏳ Скачивание файла по ссылке...")
 
             try:
                 temp_dir = tempfile.mkdtemp()
-                temp_apk_path, filename = await download_apk_from_url(url, temp_dir)
+                if data["source_method"] == "direct":
+                    temp_apk_path, filename = await download_apk_from_url(url, temp_dir)
+                    data["source_update"] = url
+                else:
+                    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+                        response = await client.get(url)
+                        response.raise_for_status()
+                        html = response.text
+
+                    apk_url = find_latest_apk_url_from_html(html, url)
+                    if not apk_url:
+                        await update.message.reply_text(
+                            "❌ Не удалось найти APK на странице. Отправьте прямую ссылку на APK или другую страницу."
+                        )
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+                        clear_flow_state(context)
+                        await restore_menu(update, context)
+                        return
+
+                    data["site_page_url"] = url
+                    data["site_apk_url"] = apk_url
+                    data["source_update"] = url
+                    temp_apk_path, filename = await download_apk_from_url(apk_url, temp_dir)
 
                 file_size = os.path.getsize(temp_apk_path)
                 version = parse_version_from_apk(temp_apk_path)
@@ -1739,15 +1858,19 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
                 data["temp_apk_path"] = temp_apk_path
                 data["version"] = version
                 data["build"] = build
-                data["source_method"] = "manual"
                 data["temp_url"] = url
-                data["source_update"] = url
+
+                if data["source_method"] == "direct":
+                    data["source_update"] = url
+                else:
+                    data["source_update"] = url
 
                 context.user_data["addapp_data"] = data
                 context.user_data["addapp_step"] = 2
 
+                extra = f"\nНайденная APK: {data.get('site_apk_url')}" if data["source_method"] == "site" else ""
                 await update.message.reply_text(
-                    f"✅ Файл скачан ({file_size / 1024 / 1024:.1f}MB).\n"
+                    f"✅ Ссылка принята.{extra}\n"
                     f"📦 Версия: {version_display}\n\n"
                     f"Шаг 2/6: Введите название приложения (латиницей, без пробелов и спецсимволов).\n"
                     f"Это название будет использовано для имени файла.\n"
@@ -1867,12 +1990,13 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
         else:
             keyboard = [
-                [KeyboardButton("manual"), KeyboardButton("direct")],
+                [KeyboardButton("manual"), KeyboardButton("direct"), KeyboardButton("site")],
             ]
             update_text = (
                 f"Шаг 5/6: Выберите способ обновления:\n"
                 f"• <b>manual</b> — нет внешнего источника, обновления только через бота\n"
                 f"• <b>direct</b> — прямая ссылка на APK (укажите на следующем шаге)\n"
+                f"• <b>site</b> — страница с APK, последняя версия найдётся автоматически\n"
             )
 
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
@@ -1908,12 +2032,13 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
         else:
             keyboard = [
-                [KeyboardButton("manual"), KeyboardButton("direct")],
+                [KeyboardButton("manual"), KeyboardButton("direct"), KeyboardButton("site")],
             ]
             update_text = (
                 f"Шаг 5/6: Выберите способ обновления:\n"
                 f"• <b>manual</b> — нет внешнего источника, обновления только через бота\n"
                 f"• <b>direct</b> — прямая ссылка на APK (укажите на следующем шаге)\n"
+                f"• <b>site</b> — страница с APK, последняя версия найдётся автоматически\n"
             )
 
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
@@ -1987,8 +2112,8 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
             return
 
-        if method not in ["manual", "direct"]:
-            await update.message.reply_text("❌ Выберите manual или direct.")
+        if method not in ["manual", "direct", "site"]:
+            await update.message.reply_text("❌ Выберите manual, direct или site.")
             return
 
         data["source_method"] = method
@@ -1998,10 +2123,13 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             await finalize_addapp(update, context, data)
         else:
             if data.get("temp_url"):
-                data["source_update"] = data.get("temp_url")
+                if method == "direct" and data.get("site_apk_url"):
+                    data["source_update"] = data.get("site_apk_url")
+                else:
+                    data["source_update"] = data.get("temp_url")
                 context.user_data["addapp_data"] = data
                 await update.message.reply_text(
-                    f"✅ Метод: direct\n\n"
+                    f"✅ Метод: {method}\n\n"
                     f"Используется ссылка, указанная ранее.\n"
                     f"Приложение будет добавлено с автопроверкой обновлений по этой ссылке.",
                     reply_markup=ReplyKeyboardRemove()
@@ -2010,8 +2138,8 @@ async def addapp_handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             else:
                 context.user_data["addapp_step"] = 6
                 await update.message.reply_text(
-                    f"✅ Метод: direct\n\n"
-                    f"Шаг 6/6: Отправьте прямую ссылку на APK файл для обновлений.\n"
+                    f"✅ Метод: {method}\n\n"
+                    f"Шаг 6/6: Отправьте ссылку для обновлений.\n"
                     f"Для отмены напишите /cancel",
                     reply_markup=ReplyKeyboardRemove()
                 )
@@ -2230,7 +2358,7 @@ async def finalize_addapp(update: Update, context: ContextTypes.DEFAULT_TYPE, da
             "title": title,
             "description": data.get("description", ""),
             "url": f"http://{SERVER_DOMAIN}/apks/{title}.apk" if SERVER_DOMAIN else f"/apks/{title}.apk",
-            "sourceUpdate": data.get("source_update") if data.get("source_method") == "direct" else None,
+            "sourceUpdate": data.get("source_update") if data.get("source_method") in ["direct", "site"] else None,
             "sourceMethod": data.get("source_method", "manual"),
             "category": data.get("category", "Uncategorized"),
             "ver": version,
@@ -3613,6 +3741,9 @@ async def main():
 
 
 if __name__ == "__main__":
+    if not acquire_single_instance_lock():
+        print("[LOG][{os.getpid()}] Another TInstaller instance is already running. Exiting.")
+        sys.exit(1)
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
