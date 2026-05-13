@@ -648,10 +648,23 @@ async def get_download_url(app: dict) -> str | None:
         if not source_update:
             log(f"ERROR: sourceUpdate обязателен для site")
             return None
+
+        if source_update.lower().endswith(".apk"):
+            log(f"WARN: sourceMethod=site но sourceUpdate указывает на APK; используем URL напрямую")
+            return source_update
+
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
                 response = await client.get(source_update)
                 response.raise_for_status()
+
+                content_type = response.headers.get("content-type", "").lower()
+                if "text/html" not in content_type and not source_update.lower().endswith(".html"):
+                    if source_update.lower().endswith(".apk"):
+                        return source_update
+                    log(f"ERROR: Site source {source_update} не вернул HTML, content-type={content_type}")
+                    return None
+
                 html = response.text
 
             url = find_latest_apk_url_from_html(html, source_update, source_filter)
